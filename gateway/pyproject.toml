@@ -7,7 +7,7 @@ license = "Apache-2.0"
 authors = [{ name = "Benny Johansson" }]
 dependencies = [
     "av>=19,<20",
-    "cryptography>=44,<50",
+    "cryptography>=44,<51",
     "numpy>=2,<3",
     # Pinned: 2.0 needs a lexicon for this Kokoro model, and 1.13.8 is the version the voice was tested on.
     "sherpa-onnx==1.13.8",
