@@ -178,7 +178,11 @@ class UtteranceTest(unittest.TestCase):
         self.assertEqual(kind("Yes..."), "prompt")
         self.assertEqual(kind("Yes please."), "prompt")
         self.assertEqual(kind("Yes, but only after the build passes."), "prompt")
-        self.assertEqual(kind("No."), "prompt")
+        self.assertEqual(kind("No."), "no")
+        self.assertEqual(kind("Um, no!"), "no")
+        self.assertEqual(kind("No?"), "prompt")
+        self.assertEqual(kind("No -"), "prompt")
+        self.assertEqual(kind("No, wait for the build."), "prompt")
         self.assertEqual(kind("Yeah."), "prompt")
 
     def test_trailing_words(self):

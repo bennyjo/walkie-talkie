@@ -38,6 +38,13 @@ takes a new fingerprint.
 A pairing older than security.PAIRING_DAYS gets {"t": "ok", ..., "expired": true}
 after the proofs, and nothing more.
 
+Other CONTROL messages, gateway to phone: "sessions", "voices", "tone", "pong",
+"confirm", "ended", "cut" with the generation to drop below, "resume" with a hold's
+id and a "leak" flag, and "leak". That flag and that message say the sound behind
+the hold may have been the earbuds. Phone to gateway: "release", "tap", "played",
+"voice", "confirmed", "declined", "ping", and "hold" with an id, which says the
+phone silenced a reply because it heard a voice over it.
+
 To pair instead: phone sends {"t": "pair", "code": C, "key": K}, with K its public
 key, and the gateway answers {"t": "paired", "token": T} and closes.
 """
@@ -328,3 +335,5 @@ class PhoneServer:
                     self.send_control({"t": "nonce", "nonce": self.challenge[0]})
                 elif self.approved:
                     self.conversation.phone_message(message)
+                elif message.get("t") == "hold":  # an ended run's closing notice must not stay silenced
+                    self.send_control({"t": "resume", "id": message.get("id"), "leak": False})

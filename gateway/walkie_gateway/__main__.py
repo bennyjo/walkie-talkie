@@ -53,7 +53,8 @@ async def serve(args):
     loop = asyncio.get_running_loop()
     speech = await loop.run_in_executor(None, Speech, args.models, args.threads)
 
-    conversation = Conversation(speech, VoiceDetector(args.models), OpusDecoder, OpusEncoder())
+    conversation = Conversation(speech, VoiceDetector(args.models), OpusDecoder, OpusEncoder(),
+                                voice_file=os.path.join(state_dir, "voice"))
     store = security.PhoneStore(state_dir)
     pairing = security.PairingWindow() if args.pair else None
     phone = PhoneServer(store, conversation, pairing)

@@ -6,6 +6,7 @@
 #   ./build.sh                 the phone's APK, out/walkie-talkie.apk
 #   ./build.sh --debug         the emulator's test APK, out/walkie-talkie-debug.apk, under its own
 #                              package name, so it can't install over the phone's APK
+#   ./build.sh --test          runs the plain Java tests, with no APK and no device
 #
 # Set WALKIE_KEYSTORE to keep one signing key across builds, so an update installs over the last
 # version. Without it, the key is made in android/.toolchain/ and goes when that folder goes.
@@ -15,6 +16,10 @@ cd "$(dirname "$0")"
 VARIANT=release
 OUT_NAME=walkie-talkie.apk
 DEBUG_FLAG=()
+RUN_TESTS=
+if [ "${1:-}" = "--test" ]; then
+  RUN_TESTS=1
+fi
 if [ "${1:-}" = "--debug" ]; then
   VARIANT=debug
   OUT_NAME=walkie-talkie-debug.apk
@@ -51,6 +56,15 @@ JAVA_HOME="$(echo "$TOOLS"/jdk/*/Contents/Home)"
 export JAVA_HOME
 BT="$(echo "$TOOLS"/bt/*)"
 JAR="$(find "$TOOLS/pf" -name android.jar)"
+
+if [ -n "$RUN_TESTS" ]; then
+  rm -rf out/test
+  mkdir -p out/test
+  "$JAVA_HOME/bin/javac" -Xlint:all,-options -Werror -source 11 -target 11 -d out/test \
+    src/main/dev/walkietalkie/TalkGate.java test/dev/walkietalkie/TalkGateTest.java
+  "$JAVA_HOME/bin/java" -ea -cp out/test dev.walkietalkie.TalkGateTest
+  exit 0
+fi
 BUILD="out/$VARIANT"
 
 rm -rf "out/${VARIANT:?}"

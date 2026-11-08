@@ -8,6 +8,7 @@ import android.media.AudioTrack;
 import android.media.MediaCodec;
 import android.media.MediaFormat;
 import android.os.Handler;
+import android.os.SystemClock;
 import android.util.Log;
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -31,6 +32,8 @@ final class SpeakerPipe implements Runnable {
     private static final int BUFFER_BYTES = RATE / 5; // 100 ms of 16-bit mono
     private static final long CODEC_WAIT_US = 5000;
     private static final short[] SILENCE = new short[FRAME_SAMPLES];
+    private static final long SOUNDING_TAIL_MS = 500;   // what's written can reach the earbuds this much later
+    private static final long MAX_HOLD_MS = 8000;       // if the gateway never answers a hold
 
     private final Listener listener;
     private final ConcurrentLinkedQueue<short[]> speech = new ConcurrentLinkedQueue<>();
@@ -39,12 +42,15 @@ final class SpeakerPipe implements Runnable {
     private volatile boolean flushRequested;
     private volatile int dropBelow;
     private volatile int lastGeneration;
+    private volatile boolean held;
+    private volatile int holdId;
+    private volatile long heldAt;
+    private volatile long lastSpeechAt;
     private AudioTrack track;
     private MediaCodec decoder;
     private Thread thread;
     private long inputTimeUs;
 
-    private final short[] ackTone = tone(660, 0.12, 0.12);
     private final short[] tapTone = tone(440, 0.07, 0.12);
     private final short[] warnTone = concat(tone(300, 0.15, 0.2), new short[RATE / 10], tone(300, 0.15, 0.2));
 
@@ -140,6 +146,7 @@ final class SpeakerPipe implements Runnable {
         int generation = Math.max(dropBelow, lastGeneration) + 1;
         dropBelow = generation;
         silenceNow();
+        held = false;
         tones.add(tapTone);
         return generation;
     }
@@ -149,7 +156,33 @@ final class SpeakerPipe implements Runnable {
         if (generation > Math.max(dropBelow, lastGeneration)) {
             dropBelow = generation;
             silenceNow();
+            held = false;
         }
+    }
+
+    /**
+     * Someone may be talking over the reply: silence now, with no round trip, keeping what's still
+     * to play in case they weren't. Returns this hold's id. Bluetooth still plays what it already has.
+     */
+    int hold() {
+        heldAt = SystemClock.elapsedRealtime();
+        held = true;
+        flushRequested = true;
+        return ++holdId;
+    }
+
+    /** The gateway found no speech, so the reply carries on. A later hold isn't ended by an old answer. */
+    void resume(int id) {
+        if (id == holdId) held = false;
+    }
+
+    void releaseHold() {
+        held = false;
+    }
+
+    /** A reply can be reaching the earbuds, and so the mic, right now. */
+    boolean sounding() {
+        return !held && SystemClock.elapsedRealtime() - lastSpeechAt < SOUNDING_TAIL_MS;
     }
 
     /** The gateway restarted, so its generations count from the start again. */
@@ -161,10 +194,6 @@ final class SpeakerPipe implements Runnable {
     private void silenceNow() {
         speech.clear();
         flushRequested = true;
-    }
-
-    void ackTone() {
-        tones.add(ackTone);
     }
 
     void warnTone() {
@@ -212,9 +241,10 @@ final class SpeakerPipe implements Runnable {
                 track.play();
                 wasSilent = true;
             }
+            if (held && SystemClock.elapsedRealtime() - heldAt > MAX_HOLD_MS) held = false;
             short[] samples = tones.poll();
             if (samples == null) {
-                samples = speech.poll();
+                samples = held ? null : speech.poll();
                 if (samples == null) {
                     wasSilent = true;
                     samples = SILENCE;
@@ -222,6 +252,7 @@ final class SpeakerPipe implements Runnable {
                     wasSilent = false;
                     listener.onSpeechStarted();
                 }
+                if (samples != SILENCE) lastSpeechAt = SystemClock.elapsedRealtime();
             }
             track.write(samples, 0, samples.length, AudioTrack.WRITE_BLOCKING);
         }

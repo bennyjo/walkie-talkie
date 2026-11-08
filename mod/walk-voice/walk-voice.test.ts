@@ -776,7 +776,7 @@ test('anything else is filed in the words as recognised, and says so in one line
   expect(seen.submits).toEqual([])
   expect(seen.notes.length).toBe(1)
   expect(seen.notes[0]).toContain('merge the release branch')
-  expect(seen.notes[0]).toContain('Say yes to confirm')
+  expect(seen.notes[0]).toContain('Confirm?')
   expect(spokenEvents(seen).find((e) => e.kind === 'text').text).toBe('Filed.')
 })
 
@@ -949,7 +949,7 @@ test('the model is not shown the word it could copy instead of filing', async ($
 })
 
 test('a new reply is relayed once, and the cursor moves past it', async ($, on) => {
-  let waiting = [{ id: 'note-1', body: 'Say yes to merge.', cursor: '000000000002' }]
+  let waiting = [{ id: 'note-1', body: 'I will merge the release branch. Confirm?', cursor: '000000000002' }]
   const { clock, seen, queue } = desk(on, {
     orders: [{ chosen: true }],
     replies: () => {
@@ -963,13 +963,13 @@ test('a new reply is relayed once, and the cursor moves past it', async ($, on) 
   await clock.settle()
   expect(seen.replyArgs[0]).toEqual(['replies', '--after', '000000000001'])
   expect(seen.replyArgs.at(-1)).toEqual(['replies', '--after', '000000000002'])
-  expect(seen.events.filter((e) => e.kind === 'relay')).toEqual([{ kind: 'relay', note: 'note-1', text: 'Say yes to merge.' }])
+  expect(seen.events.filter((e) => e.kind === 'relay')).toEqual([{ kind: 'relay', note: 'note-1', text: 'I will merge the release branch. Confirm?' }])
   expect(seen.cursors).toEqual(['000000000002'])
 
   queue.push({ chosen: true, id: 10, submit: 'what did it say' })
   await clock.advance(1000)
   await clock.settle()
-  expect(seen.prompts[0].prompt).toContain('The primary replied: Say yes to merge.')
+  expect(seen.prompts[0].prompt).toContain('The primary replied: I will merge the release branch. Confirm?')
 })
 
 test('a reply read as the session stops being chosen stays unread', async ($, on) => {
@@ -1059,7 +1059,7 @@ test('a reply waits while nobody is listening', async ($, on) => {
 
 test('a yes confirmed in the app is filed as such, and names the note and the words heard', async ($, on) => {
   const { clock, seen } = desk(on, {
-    orders: [{ chosen: true, id: 5, confirm: { note: 'note-1', spoken: 'Say yes to merge.' } }],
+    orders: [{ chosen: true, id: 5, confirm: { note: 'note-1', spoken: 'I will merge the release branch. Confirm?' } }],
   })
   await begin($, clock)
   await clock.settle()
@@ -1067,14 +1067,14 @@ test('a yes confirmed in the app is filed as such, and names the note and the wo
   expect(seen.notes.length).toBe(1)
   expect(seen.notes[0].startsWith('Confirmed in the app with a fingerprint')).toBe(true)
   expect(seen.notes[0]).toContain('note note-1')
-  expect(seen.notes[0]).toContain('Say yes to merge.')
+  expect(seen.notes[0]).toContain('I will merge the release branch. Confirm?')
   expect(seen.events).toContainEqual({ kind: 'order', id: 5, ok: true })
 })
 
 test('a yes that could not be filed reaches the gateway as an error', async ($, on) => {
   const { clock, seen } = desk(on, {
     handoffExit: 1,
-    orders: [{ chosen: true, id: 5, confirm: { note: 'note-1', spoken: 'Say yes to merge.' } }],
+    orders: [{ chosen: true, id: 5, confirm: { note: 'note-1', spoken: 'I will merge the release branch. Confirm?' } }],
   })
   await begin($, clock)
   await clock.settle()

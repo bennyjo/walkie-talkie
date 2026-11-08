@@ -395,7 +395,7 @@ TRAILING = {
     "i", "we", "they", "he", "she", "also", "maybe",
 }
 CANCEL = {"cancel", "never mind cancel", "nevermind cancel"}
-UNSURE_YES = re.compile("(?:\\?|-|\u2013|\u2014|\u2026|\\.\\.\\.)\\s*$")  # "Yes?" asks, and "Yes -" was going to say more
+UNSURE_YES = re.compile("(?:\\?|-|\u2013|\u2014|\u2026|\\.\\.\\.)\\s*$")  # "Yes?" asks, and "No -" was going to say more
 CONFIRM_TYPING = {"type it", "type that", "yes type it", "yes type that"}
 
 
@@ -410,7 +410,7 @@ def trails_off(text):
 
 
 def kind(text):
-    """What an utterance asks for: noise, cancel, confirm-typing, yes, or prompt."""
+    """What an utterance asks for: noise, cancel, confirm-typing, yes, no, or prompt."""
     words = words_of(text)
     if len("".join(words)) < 2 or all(w in FILLERS for w in words):
         return "noise"
@@ -419,8 +419,8 @@ def kind(text):
         return "cancel"
     if spoken in CONFIRM_TYPING:
         return "confirm-typing"
-    if spoken == "yes":
-        return "prompt" if UNSURE_YES.search(text) else "yes"
+    if spoken in ("yes", "no"):
+        return "prompt" if UNSURE_YES.search(text) else spoken
     return "prompt"
 
 

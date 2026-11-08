@@ -33,11 +33,13 @@ import org.json.JSONObject;
  * It starts only with a fingerprint's signature for one session, and it stops for good when the
  * gateway ends that run. The next Start takes a new fingerprint, like a banking app's next login.
  */
-public class TalkService extends Service implements GatewayLink.Listener, SpeakerPipe.Listener {
+public class TalkService extends Service implements GatewayLink.Listener, SpeakerPipe.Listener, MicPipe.Listener {
     static final String ACTION_START = "dev.walkietalkie.START";
     static final String ACTION_STOP = "dev.walkietalkie.STOP";
+    static final String ACTION_VOICE = "dev.walkietalkie.VOICE";
     static final String ACTION_CONFIRMED = "dev.walkietalkie.CONFIRMED";
     static final String ACTION_DECLINED = "dev.walkietalkie.DECLINED";
+    static final String EXTRA_VOICE = "voice";
     static final String EXTRA_RUN = "run";
     static final String EXTRA_APPROVE = "approve";
     static final String EXTRA_NAME = "name";
@@ -67,6 +69,13 @@ public class TalkService extends Service implements GatewayLink.Listener, Speake
         volatile int taps;
         volatile int underruns;
         volatile JSONObject sessions;
+        volatile JSONObject voices;
+        volatile double micLevel;
+        volatile double micFloor;
+        volatile double micLeak;
+        volatile int micChannels;
+        volatile int talkOvers;
+        volatile int resumedTalkOvers;
         volatile String session;    // the name of the session this run talks to
         volatile int pairingDays = -1;
         volatile JSONObject confirm; // a read-back waiting for a fingerprint, or null
@@ -116,6 +125,8 @@ public class TalkService extends Service implements GatewayLink.Listener, Speake
         String action = intent == null ? null : intent.getAction();
         if (ACTION_STOP.equals(action)) {
             stopSelf();
+        } else if (ACTION_VOICE.equals(action)) {
+            if (started) chooseVoice(intent.getStringExtra(EXTRA_VOICE));
         } else if (ACTION_CONFIRMED.equals(action) || ACTION_DECLINED.equals(action)) {
             if (started) answerConfirm(intent, ACTION_CONFIRMED.equals(action));
         } else if (ACTION_START.equals(action) && !started) {
@@ -155,7 +166,7 @@ public class TalkService extends Service implements GatewayLink.Listener, Speake
 
         link = new GatewayLink(pairing, this, run, approve);
         speaker = new SpeakerPipe(this);
-        mic = new MicPipe(this, link);
+        mic = new MicPipe(this, link, speaker, this);
         try {
             speaker.start(earbuds());
             mic.start(usbInput());
@@ -169,6 +180,7 @@ public class TalkService extends Service implements GatewayLink.Listener, Speake
         status.running = true;
         status.why = null;
         status.sessions = null;
+        status.voices = null;
         status.confirm = null;
         status.session = intent.getStringExtra(EXTRA_NAME);
         link.start();
@@ -288,6 +300,10 @@ public class TalkService extends Service implements GatewayLink.Listener, Speake
         status.micSilenced = silenced;
         status.roundTripMs = link.roundTripMs();
         status.underruns = speaker.underruns();
+        status.micLevel = mic.takeLevel();
+        status.micFloor = mic.floor();
+        status.micLeak = mic.leak();
+        status.micChannels = mic.channels();
     }
 
     private Notification notification(String text) {
@@ -309,6 +325,24 @@ public class TalkService extends Service implements GatewayLink.Listener, Speake
     }
 
     // --- the link ----------------------------------------------------------------
+
+    private void chooseVoice(String voice) {
+        try {
+            send(new JSONObject().put("id", voice), "voice");
+        } catch (JSONException e) {
+            Log.e(TAG, "bad voice id");
+        }
+    }
+
+    /** From the capture thread: silence now, then the gateway decides whether it was a voice. */
+    @Override public void onTalkOver() {
+        status.talkOvers++;
+        try {
+            send(new JSONObject().put("id", speaker.hold()), "hold");
+        } catch (JSONException e) {
+            Log.e(TAG, "bad message");
+        }
+    }
 
     private void tap(int generation) {
         try {
@@ -341,9 +375,19 @@ public class TalkService extends Service implements GatewayLink.Listener, Speake
             case "confirm":
                 showConfirm(message.isNull("nonce") ? null : message);
                 break;
+            case "voices":
+                status.voices = message;
+                break;
             case "tone":
-                if (message.optString("kind").equals("warn")) speaker.warnTone();
-                else speaker.ackTone();
+                speaker.warnTone();
+                break;
+            case "resume":
+                speaker.resume(message.optInt("id"));
+                if (message.optBoolean("leak")) mic.wasLeak();
+                status.resumedTalkOvers++;
+                break;
+            case "leak":
+                mic.wasLeak();
                 break;
             case "cut":
                 speaker.cutTo(message.optInt("gen"));
@@ -441,6 +485,7 @@ public class TalkService extends Service implements GatewayLink.Listener, Speake
         if (status.connected && !connected) speaker.warnTone();
         status.connected = connected;
         status.why = why;
+        if (!connected) speaker.releaseHold(); // nobody can answer it now
         Log.i(TAG, connected ? "connected" : "disconnected");
     }
 

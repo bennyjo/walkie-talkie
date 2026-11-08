@@ -35,7 +35,10 @@ final class Variant {
         return record.read(samples, 0, samples.length);
     }
 
-    /** Raw 16 kHz mono 16-bit samples from a file, played once at about real time and then deleted. */
+    /**
+     * Raw 16 kHz mono 16-bit samples from a file, played once at about real time and then deleted.
+     * They arrive on the left channel alone, as from a receiver with one transmitter.
+     */
     private static int readTestMic(Context context, short[] samples) {
         File file = new File(context.getExternalFilesDir(null), "test-mic.pcm");
         try {
@@ -44,7 +47,7 @@ final class Variant {
                 testMic = new FileInputStream(file);
                 Log.i(TAG, "test microphone started");
             }
-            byte[] raw = new byte[samples.length * 2];
+            byte[] raw = new byte[samples.length];
             int got = testMic.read(raw);
             if (got <= 0) {
                 testMic.close();
@@ -53,9 +56,14 @@ final class Variant {
                 Log.i(TAG, "test microphone ended");
                 return 0;
             }
-            ByteBuffer.wrap(raw, 0, got).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer().get(samples, 0, got / 2);
+            short[] mono = new short[got / 2];
+            ByteBuffer.wrap(raw, 0, got).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer().get(mono);
+            for (int i = 0; i < mono.length; i++) {
+                samples[2 * i] = mono[i];
+                samples[2 * i + 1] = 0;
+            }
             SystemClock.sleep(20);
-            return got / 2;
+            return got;
         } catch (IOException e) {
             return 0;
         }

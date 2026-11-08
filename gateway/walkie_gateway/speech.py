@@ -16,8 +16,24 @@ KOKORO = "kokoro-en-v0_19"
 VOICE_RATE = 24000      # Kokoro's output
 OPUS_FRAME = 480        # 20 ms at the voice's rate
 OPUS_BITRATE = 24000
+RESET_AFTER_WINDOWS = 16  # about half a second with no voice: Silero starts afresh
 SILENT = 0.01           # samples quieter than this at either end of a sentence are trimmed
 TAIL_SECONDS = 0.12     # the pause kept after a sentence
+# The pinned Kokoro model's speakers. A voice's place here is its speaker ID in that model.
+VOICES = (
+    ("af", "Bella and Sarah, American"),
+    ("af_bella", "Bella, American"),
+    ("af_nicole", "Nicole, American"),
+    ("af_sarah", "Sarah, American"),
+    ("af_sky", "Sky, American"),
+    ("am_adam", "Adam, American"),
+    ("am_michael", "Michael, American"),
+    ("bf_emma", "Emma, British"),
+    ("bf_isabella", "Isabella, British"),
+    ("bm_george", "George, British"),
+    ("bm_lewis", "Lewis, British"),
+)
+DEFAULT_VOICE = VOICES[0][0]
 
 
 def default_models_dir():
@@ -74,15 +90,20 @@ class Speech:
         self.recognizer.decode_stream(stream)
         return stream.result.text.strip()
 
-    def synthesize(self, text):
+    def synthesize(self, text, voice=DEFAULT_VOICE):
         """int16 samples at VOICE_RATE."""
-        audio = self.tts.generate(text, sid=0, speed=1.0)
+        sid = next(i for i, (name, _) in enumerate(VOICES) if name == voice)
+        audio = self.tts.generate(text, sid=sid, speed=1.0)
         samples = trim_silence(np.asarray(audio.samples, dtype=np.float32))
         return (np.clip(samples, -1.0, 1.0) * 32767).astype(np.int16)
 
 
 class VoiceDetector:
-    """Silero, which keeps state between windows. Light enough to run per window on the event loop."""
+    """Silero, which keeps state between windows. Light enough to run per window on the event loop.
+
+    That state is cleared after a moment of quiet. Otherwise one utterance close to the mic can leave
+    Silero deaf to a normal voice at collar distance, through Opus, for several utterances after it.
+    """
 
     def __init__(self, models_dir):
         config = sherpa_onnx.VadModelConfig(
@@ -98,12 +119,17 @@ class VoiceDetector:
         )
         # Holds one stretch of unbroken speech, up to Silero's 20 s default, so it never has to grow.
         self.vad = sherpa_onnx.VoiceActivityDetector(config, buffer_size_in_seconds=30)
+        self.quiet_windows = 0
 
     def __call__(self, window):
         self.vad.accept_waveform(window.astype(np.float32) / 32768.0)
         while not self.vad.empty():
             self.vad.pop()  # finished segments: the turn detector keeps its own audio
-        return self.vad.is_speech_detected()
+        speech = self.vad.is_speech_detected()
+        self.quiet_windows = 0 if speech else self.quiet_windows + 1
+        if self.quiet_windows == RESET_AFTER_WINDOWS:
+            self.vad.reset()
+        return speech
 
 
 class OpusDecoder:
