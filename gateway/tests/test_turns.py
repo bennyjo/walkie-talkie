@@ -2,17 +2,18 @@ import asyncio
 import unittest
 
 import numpy as np
-
 from walkie_gateway.turns import (
     CARRIED_TAIL,
     CARRY_DB,
     END_HOLD,
+    HOLD_PREROLL,
     MAX_SECONDS,
     NOISE_HOLD,
     PREROLL,
     RATE,
     SECONDS,
     SKIP_HOLD,
+    START_WINDOWS,
     THINKING_HOLD,
     THINKING_PAUSE,
     TRANSCRIBE_LEAD,
@@ -20,6 +21,33 @@ from walkie_gateway.turns import (
     WINDOW,
     TurnDetector,
 )
+
+VOICE_WINDOWS = 60
+
+
+def collar_voice(dbfs):
+    """Voiced speech as a clipped-on mic hears it: harmonics of 120 Hz, most of the energy low."""
+    t = np.arange(WINDOW * VOICE_WINDOWS) / RATE
+    wave = sum(np.sin(2 * np.pi * 120 * k * t) / k for k in range(1, 25))
+    wave *= 10 ** (dbfs / 20) * 32768 / np.sqrt(np.mean(wave ** 2))
+    return [w.astype(np.int16) for w in np.split(wave, VOICE_WINDOWS)]
+
+
+def collar_noise_samples(count, dbfs=-50):
+    """Hiss, and twice its power in the rumble of wind and walking."""
+    rng = np.random.default_rng(1)
+    rumble = np.convolve(rng.normal(size=count), np.ones(160) / np.sqrt(160), "same")
+    noise = np.sqrt(1 / 3) * rng.normal(size=count) + np.sqrt(2 / 3) * rumble
+    return (noise * 10 ** (dbfs / 20) * 32768 / np.sqrt(np.mean(noise ** 2))).astype(np.int16)
+
+
+def collar_noise():
+    return collar_noise_samples(WINDOW)
+
+
+def collar_noise_windows(count):
+    return list(np.split(collar_noise_samples(WINDOW * count), count))
+
 
 LOUD = np.array(([3000] * 8 + [-3000] * 8) * (WINDOW // 16), dtype=np.int16)
 QUIET = np.zeros(WINDOW, dtype=np.int16)
@@ -351,6 +379,52 @@ class TurnDetectorTest(unittest.IsolatedAsyncioTestCase):
         h.detector.reset()
         await h.play(LOUD, 1)
         self.assertFalse(h.detector.talking)
+
+    async def test_a_voice_at_collar_distance_counts_over_a_real_background(self):
+        # The owner's report: only heard with the mic at the mouth. Speech at -38 dBFS over
+        # -50 dBFS of hiss and rumble passed the old gate in 5% of its windows.
+        h = Harness()
+        await h.play(collar_noise(), 3)
+        voiced = sum(h.detector._hears(w)[1] for w in collar_voice(-38) + collar_noise_windows(30))
+        self.assertGreater(voiced, 0.8 * VOICE_WINDOWS)
+
+    async def test_a_voice_at_collar_distance_is_detected_quickly(self):
+        h = Harness()
+        await h.play(collar_noise(), 3)
+        windows = 0
+        for window in collar_voice(-38):
+            h.detector.feed(window)
+            windows += 1
+            if h.detector.talking:
+                break
+        self.assertLessEqual(windows, START_WINDOWS + 2)
+
+    async def test_hiss_and_rumble_alone_never_count(self):
+        h = Harness()
+        await h.play(collar_noise(), 8)
+        self.assertFalse(h.detector.talking)
+        self.assertEqual(h.turns, [])
+
+    async def test_a_voice_confirmed_over_a_reply_keeps_its_start(self):
+        h = Harness()
+        await h.play(QUIET, 1.5)
+        for _ in range(int(1 / SECONDS)):
+            h.detector.feed(LOUD, ignored=True)
+        self.assertFalse(h.detector.talking)
+        h.detector.allow_start()
+        self.assertEqual(len(h.detector.before), HOLD_PREROLL)
+        h.detector.before.popleft()  # the next window takes its place
+        h.detector.feed(LOUD)
+        self.assertTrue(h.detector.talking)
+        self.assertEqual(len(h.detector.audio), HOLD_PREROLL)  # what came before that is the reply's own sound
+
+    async def test_a_message_started_in_silence_keeps_its_whole_preroll(self):
+        h = Harness()
+        await h.play(QUIET, 1.5)
+        h.detector.feed(LOUD)
+        h.detector.feed(LOUD)
+        self.assertTrue(h.detector.talking)
+        self.assertEqual(len(h.detector.audio), PREROLL)
 
     async def test_a_long_turn_ends_at_the_limit(self):
         h = Harness()

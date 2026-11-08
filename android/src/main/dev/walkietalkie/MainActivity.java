@@ -61,6 +61,9 @@ public class MainActivity extends Activity {
     private TextView statusLine;
     private TextView sessionsHint;
     private RadioGroup sessionsGroup;
+    private TextView voicesHint;
+    private RadioGroup voicesGroup;
+    private String shownVoices;
     private TextView confirmText;
     private TextView details;
     private String shownSessions;
@@ -132,6 +135,11 @@ public class MainActivity extends Activity {
         talkSection.addView(sessionsHint);
         sessionsGroup = new RadioGroup(this);
         talkSection.addView(sessionsGroup);
+        talkSection.addView(label("Voice"));
+        voicesHint = text(14);
+        talkSection.addView(voicesHint);
+        voicesGroup = new RadioGroup(this);
+        talkSection.addView(voicesGroup);
         startButton = button("Start", this::toggle);
         startButton.setBackgroundTintList(ColorStateList.valueOf(BRAND_GREEN));
         startButton.setTextColor(Color.WHITE);
@@ -380,6 +388,11 @@ public class MainActivity extends Activity {
                 });
     }
 
+    private void chooseVoice(String voice) {
+        startService(new Intent(this, TalkService.class)
+                .setAction(TalkService.ACTION_VOICE).putExtra(TalkService.EXTRA_VOICE, voice));
+    }
+
     // --- drawing -----------------------------------------------------------------
 
     private void render() {
@@ -406,6 +419,7 @@ public class MainActivity extends Activity {
         show(startButton, status.running ? "Stop" : "Start");
         show(statusLine, statusText(status));
         renderSessions(status);
+        renderVoices(status);
         show(details, status.running ? detailsText(status)
                 : "Plug in the DJI receiver and connect the earbuds before you start.");
     }
@@ -481,6 +495,33 @@ public class MainActivity extends Activity {
         }
     }
 
+    private void renderVoices(TalkService.Status status) {
+        JSONObject voices = status.running ? status.voices : null;
+        String key = (status.running ? "on:" : "off:") + (voices == null ? "" : voices.toString());
+        if (key.equals(shownVoices)) return;
+        shownVoices = key;
+        voicesGroup.removeAllViews();
+        JSONArray list = voices == null ? null : voices.optJSONArray("list");
+        if (list == null || list.length() == 0) {
+            voicesHint.setVisibility(View.VISIBLE);
+            voicesHint.setText("Voices show here once you start.");
+            return;
+        }
+        voicesHint.setVisibility(View.GONE);
+        String chosen = voices.optString("chosen");
+        for (int i = 0; i < list.length(); i++) {
+            JSONObject voice = list.optJSONObject(i);
+            String id = voice.optString("id");
+            RadioButton option = new RadioButton(this);
+            option.setText(voice.optString("name"));
+            option.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
+            option.setPadding(dp(8), dp(10), 0, dp(10));
+            voicesGroup.addView(option);
+            option.setChecked(id.equals(chosen));
+            option.setOnClickListener(v -> chooseVoice(id));
+        }
+    }
+
     private static String rowName(JSONObject session) {
         return session.optString("name") + "  " + session.optString("session");
     }
@@ -510,11 +551,26 @@ public class MainActivity extends Activity {
     }
 
     private String detailsText(TalkService.Status status) {
-        return String.format(Locale.ROOT, "Mic: %s\nSound: %s\nMode: %s\nMic silenced: %s\nRound trip: %d ms\nEarbud taps: %d\nUnderruns: %d",
-                routeName(status.micRoute), routeName(status.soundRoute),
+        return String.format(Locale.ROOT, "Mic: %s\nMic channels: %s\nMic level: %.0f dB\nBackground: %.0f dB\nEarbud leak: %s\nSound: %s\nMode: %s\nMic silenced: %s\nRound trip: %d ms\nEarbud taps: %d\nTalked over: %d, resumed: %d\nUnderruns: %d",
+                routeName(status.micRoute), channelsName(status.micChannels),
+                status.micLevel, status.micFloor, status.micLeak > -100 ? String.format(Locale.ROOT, "%.0f dB", status.micLeak) : "none yet",
+                routeName(status.soundRoute),
                 status.audioMode == AudioManager.MODE_NORMAL ? "normal" : "call (" + status.audioMode + ")",
                 status.micSilenced ? "yes" : "no",
-                status.roundTripMs, status.taps, status.underruns);
+                status.roundTripMs, status.taps, status.talkOvers, status.resumedTalkOvers, status.underruns);
+    }
+
+    private static String channelsName(int channels) {
+        switch (channels) {
+            case 1:
+                return "left only";
+            case 2:
+                return "right only";
+            case 3:
+                return "both";
+            default:
+                return "no sound";
+        }
     }
 
     private static String routeName(int type) {

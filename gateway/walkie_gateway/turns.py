@@ -31,8 +31,10 @@ from .text import kind, trails_off
 RATE = 16000
 WINDOW = 512            # samples Silero takes at a time: 32 ms
 SECONDS = WINDOW / RATE
-START_WINDOWS = 3       # this many voiced windows in a row start an utterance
-PREROLL = 10            # windows kept from before it started
+START_WINDOWS = 2       # this many voiced windows in a row start an utterance
+LOST_START_WINDOWS = 3  # this many while the mic is ignored, and what's being said has lost its start
+PREROLL = 15            # windows kept from before it started, so a soft first word survives
+HOLD_PREROLL = 5        # the same under a hold: 0.16 s, because everything earlier is the reply's own sound
 MIN_VOICED = 8          # an utterance with fewer voiced windows is noise, never transcribed
 CONTINUE_WINDOWS = 2    # this many windows of speech in a row means the person is talking again
 NOISE_HOLD = 0.5        # seconds of quiet that end a noise, which never gets as far as a message
@@ -47,20 +49,31 @@ CARRY_DB = 15           # speech this far below the message's own median level d
 CARRY_WINDOWS = 6       # how much of it is compared: 0.2 s, because a quieter voice's loudest moments can pass alone
 CARRIED_TAIL = 10       # windows of audio kept after the last words that carried the message on
 SKIP_HOLD = 0.7         # seconds with no voice that mean speech which lost its start has ended
-# Carried over from walk mode. A voiced window must also be this much louder
-# than the quietest of the last four seconds, which keeps a passer-by from starting a message.
+# A voiced window must also be this much louder than the quietest of the last four
+# seconds, and louder than MIN_DB, which keeps a distant voice from starting a message.
+# Measured in the speech band, because a clipped-on mic hears a voice about 16 dB
+# quieter than one held at the mouth.
 MARGIN_DB = 12
-MIN_DB = -60
+MIN_DB = -55
 BACKGROUND_WINDOWS = 125
 FLOOR_READY_WINDOWS = 31  # for the first second, the floor can't be louder than a quiet room
+BAND_HERTZ = (200, 4000)  # above footsteps and wind, and below most hiss
+HANN = np.hanning(WINDOW)
+BAND = slice(BAND_HERTZ[0] * WINDOW // RATE, BAND_HERTZ[1] * WINDOW // RATE + 1)
+FULL_SCALE_POWER = float(np.dot(HANN, HANN)) * WINDOW / 2 * 32768.0 ** 2
 
 
-def loudness(samples):
-    """A window's loudness in dBFS, after a first difference that takes out
-    most of the rumble of wind and footsteps."""
-    diff = np.diff(samples.astype(np.float64), prepend=float(samples[0]))
-    total = float(np.dot(diff, diff))
-    return 10 * math.log10(total / len(samples)) - 90.3 if total else -120.0
+def loudness(window):
+    """A window's loudness in the speech band, in dB under full scale."""
+    power = np.abs(np.fft.rfft(window * HANN)[BAND]) ** 2
+    total = float(power.sum())
+    return 10 * math.log10(total / FULL_SCALE_POWER) if total else -120.0
+
+
+def speaking_level(levels):
+    """How loud someone is, from windows called speech. Above the median, because those include
+    pauses and the voice detector's tail over the background, in a share that depends on the message."""
+    return sorted(levels)[len(levels) * 3 // 4]
 
 
 class TurnDetector:
@@ -75,6 +88,8 @@ class TurnDetector:
         self.levels = collections.deque(maxlen=BACKGROUND_WINDOWS)
         self.rest = np.zeros(0, dtype=np.int16)
         self.skipping = False   # speech that lost its start is still going
+        self.finished_marks = {}        # when the last message was detected, and its transcription began
+        self.finished_level = None      # how loud the last message was
         self.skipped_at = 0.0   # when speech was last skipped: anything said around then may be missing its start
         self._idle()
 
@@ -84,6 +99,7 @@ class TurnDetector:
         self.run_levels = []    # how loud each voiced window in a row was
         self.audio = []
         self.voice_levels = []  # how loud this message's voiced windows were
+        self.speech_levels = []  # every window the voice detector called speech, however quiet: a fair level
         self.spoken = 0         # how much of the audio runs up to the last words that carried it on
         self.held = []          # what's heard that may belong to the next message: after a start that may be noise, or past the limit
         self.voiced = 0
@@ -91,7 +107,9 @@ class TurnDetector:
         self.speech_run = 0
         self.longest_pause = 0.0
         self.last_voice = 0.0
+        self.detected_at = 0.0
         self.attempt = None
+        self.attempt_at = 0.0
 
     def reset(self):
         """Forget anything in progress: nobody hears the end of it now."""
@@ -108,6 +126,12 @@ class TurnDetector:
         self.skipping = True
         self.skip_quiet = 0
         self.skipped_at = self.clock()
+
+    def allow_start(self):
+        """Someone may be talking over the reply, so what they're saying hasn't lost its start."""
+        self.skipping = False
+        while len(self.before) > HOLD_PREROLL:
+            self.before.popleft()
 
     def feed(self, samples, ignored=False):
         self.rest = np.concatenate((self.rest, samples))
@@ -136,7 +160,7 @@ class TurnDetector:
             return
         self.before.append(window)
         self._count_run(voiced, level)
-        if len(self.run_levels) >= START_WINDOWS:
+        if len(self.run_levels) >= LOST_START_WINDOWS:
             self.skip_speech()
         if self.skipping:
             self._skip(voiced)
@@ -168,14 +192,17 @@ class TurnDetector:
                 self.audio = list(self.before)
                 self.spoken = len(self.audio)
                 self.voice_levels = list(self.run_levels)
+                self.speech_levels = list(self.run_levels)
                 self.voiced = len(self.run_levels)
-                self.last_voice = self.clock()
+                self.last_voice = self.detected_at = self.clock()
             return
         too_long = len(self.audio) * SECONDS >= MAX_SECONDS
         if too_long or self.voiced < MIN_VOICED:
             self.held.append((window, speech, voiced, level, recent))
         if not too_long:
             self.audio.append(window)
+        if speech:
+            self.speech_levels.append(level)
         close = recent >= statistics.median(self.voice_levels) - CARRY_DB
         if voiced and close and not too_long:
             self.voiced += 1
@@ -194,6 +221,7 @@ class TurnDetector:
             return
         if (too_long or quiet >= self._transcribe_at()) and self.attempt is None:
             self.attempt = asyncio.ensure_future(self.transcribe(np.concatenate(self.audio[:self.spoken + CARRIED_TAIL])))
+            self.attempt_at = self.clock()
         self._maybe_finish(quiet, too_long)
 
     def _carry_on(self):
@@ -222,6 +250,8 @@ class TurnDetector:
         if trails_off(text) and kind(text) == "prompt" and quiet < THINKING_HOLD and not too_long:
             return
         last_voice, longest_pause = self.last_voice, self.longest_pause
+        self.finished_marks = {"speech_detected": self.detected_at, "transcribe_start": self.attempt_at}
+        self.finished_level = speaking_level(self.speech_levels)
         self._next_message()
         self.on_turn(text, last_voice, longest_pause)
 

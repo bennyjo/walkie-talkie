@@ -75,6 +75,7 @@ final class GatewayLink {
     private final LinkedBlockingQueue<byte[]> outgoing = new LinkedBlockingQueue<>();
     private JSONObject approve;     // the fingerprint's signature, until a login has carried it
     private JSONObject unconfirmedTap;
+    private JSONObject unconfirmedVoice;
     private long micSeq;
     private volatile long lastSpeechSeq;
     private volatile boolean running;
@@ -162,20 +163,27 @@ final class GatewayLink {
         }
     }
 
-    /** A tap is kept until the gateway confirms it, and sent again after a reconnect. */
+    /** A tap or a voice choice is kept until the gateway confirms it, and sent again after a reconnect. */
     void sendControl(JSONObject message) {
         synchronized (lock) {
             if (!running) return;
-            if (message.optString("t").equals("tap")) unconfirmedTap = message;
+            String kind = message.optString("t");
+            if (kind.equals("tap")) unconfirmedTap = message;
+            if (kind.equals("voice")) unconfirmedVoice = message;
             if (connected) outgoing.offer(controlFrame(message));
         }
     }
 
     private void confirm(JSONObject message) {
         synchronized (lock) {
-            if (message.optString("t").equals("cut") && unconfirmedTap != null
+            String kind = message.optString("t");
+            if (kind.equals("cut") && unconfirmedTap != null
                     && message.optInt("gen") >= unconfirmedTap.optInt("gen")) {
                 unconfirmedTap = null;
+            }
+            if (kind.equals("voices") && unconfirmedVoice != null
+                    && unconfirmedVoice.optString("id").equals(message.optString("chosen"))) {
+                unconfirmedVoice = null;
             }
         }
     }
@@ -292,6 +300,7 @@ final class GatewayLink {
         synchronized (lock) {
             connected = true;
             if (unconfirmedTap != null) outgoing.offer(controlFrame(unconfirmedTap));
+            if (unconfirmedVoice != null) outgoing.offer(controlFrame(unconfirmedVoice));
             if (up < 0) {
                 micFrames.clear();
             } else {

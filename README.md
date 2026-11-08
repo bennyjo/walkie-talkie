@@ -10,7 +10,7 @@ You leave the desk with Firstmate halfway through a batch of work. Earbuds in, a
 
 On the way out, you open Walkie Talkie, choose your Firstmate session, tap **Start**, and touch the fingerprint sensor. You hear "Connected to" and the session's name. You lock the phone and walk.
 
-Then you just talk. "What's everyone working on?" When you stop, a soft tone says your words went through, and Firstmate's answer plays in your earbuds. "Tell the README task to lead with the use case." If Firstmate is still busy, you hear "It's in the queue," and your message runs after the current turn. Tap an earbud to cut a reply short and stop the turn.
+Then you just talk. "What's everyone working on?" When you stop, your words go through, and Firstmate's answer plays in your earbuds. "Tell the README task to lead with the use case." If Firstmate is still busy, you hear "It's in the queue," and your message runs after the current turn. Talk over a reply to cut it short, as in a phone call, or tap an earbud. Either one stops the turn.
 
 If you've set up a front desk, you can talk to it while Firstmate is deep in a long turn. It answers from Firstmate's status and files everything else for Firstmate to pick up. When Firstmate wants to merge, it reads the exact action back, and you hear it word for word. You say "yes", take out the phone, and confirm with your fingerprint. A voice alone confirms nothing there.
 

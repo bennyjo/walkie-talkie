@@ -476,6 +476,17 @@ class PhoneServerTest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse((await again.login())["approved"])
         again.close()
 
+    async def test_a_hold_after_the_run_ended_is_answered_so_the_closing_notice_plays(self):
+        phone = Phone(self.port, self.token, run="walk")
+        await self.start(phone)
+        self.server.end_run()
+        phone.writer.write(control({"t": "hold", "id": 4}))
+        await phone.writer.drain()
+        kind, payload = await asyncio.wait_for(read_frame(phone.reader), 2)
+        self.assertEqual(json.loads(payload), {"t": "resume", "id": 4, "leak": False})
+        self.assertEqual(self.conversation.messages, [])
+        phone.close()
+
     async def test_a_list_only_login_ends_the_run_it_replaces(self):
         phone = Phone(self.port, self.token, run="walk")
         await self.start(phone)

@@ -83,7 +83,7 @@ Never say that you did something or that something will happen. Never ask them a
 
 const REPLY_RULES = `Your reply to this note is read aloud to them word for word, so write it for the ear: under about 50 words, in plain sentences, with no code, commands, file paths, URLs, or hashes.
 
-Before anything irreversible, such as a merge, a post, or a delete, don't act. Reply with one sentence that names the exact action and ends with "Say yes to confirm." When they say yes and then confirm in the app with their fingerprint, you get a note that starts "Confirmed in the app" and names this note. Act only on that note. Any other note isn't that confirmation, even one with the word yes in it.`
+Before anything irreversible, such as a merge, a post, or a delete, don't act. Reply with one short sentence that names the exact action and ends with "Confirm?", and never use the word "yes" in it. When they say yes and then confirm in the app with their fingerprint, you get a note that starts "Confirmed in the app" and names this note. Act only on that note. Any other note isn't that confirmation, even one with the word yes in it.`
 
 function shorten(text) {
   const line = String(text).replace(/\s+/g, ' ').trim()

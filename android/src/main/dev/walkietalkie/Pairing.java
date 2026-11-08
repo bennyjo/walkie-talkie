@@ -107,7 +107,7 @@ final class Pairing {
 
     /** Only the private network: an IPv4 address in Tailscale's 100.64.0.0/10. */
     static boolean allowedAddress(String host) {
-        if (Variant.TEST && "10.0.2.2".equals(host)) return true;
+        if (Variant.TEST && ("10.0.2.2".equals(host) || "127.0.0.1".equals(host))) return true;
         String[] parts = host.split("\\.", -1);
         if (parts.length != 4) return false;
         int[] octets = new int[4];

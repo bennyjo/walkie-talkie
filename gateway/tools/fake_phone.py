@@ -7,6 +7,11 @@ then starts as the app does: it lists the sessions, asks for a challenge, signs 
 with that key, and logs in with the signature. Each --say file is one turn. It prints when each thing
 arrived, in seconds after that clip ended. With --confirm, it signs any read-back the gateway asks to
 confirm, as a fingerprint in the app would.
+
+To talk over a reply, --talk-over names a clip to speak, --talk-after seconds into the reply. Like
+the app, it sends a hold just after the voice starts, and stops playing what it received. --leak-db
+plays the reply back into the mic at that level, as earbuds leaking into a collar mic would.
+--false-hold-after sends a hold with no voice, as a cough would, to see the reply resume.
 """
 import argparse
 import asyncio
@@ -33,12 +38,15 @@ from walkie_gateway.phone import (
     control,
     frame,
 )
-from walkie_gateway.speech import Speech
+from walkie_gateway.speech import OpusDecoder, Speech
 
 
 async def read_frame(reader):
     length, kind = HEADER.unpack(await reader.readexactly(HEADER.size))
     return kind, await reader.readexactly(length)
+
+
+LOUDNESS_OF_REPLY = 0.12    # a Kokoro reply's level while speaking, as a share of full scale
 
 
 def load_wav(path):
@@ -82,6 +90,12 @@ class FakePhone:
         self.sessions = None
         self.cut_gen = 0
         self.on_sessions = asyncio.Event()
+        self.leak_gain = None   # the reply goes back into the mic through this gain
+        self.leak = np.zeros(0, dtype=np.int16)
+        self.leak_decoder = None
+        self.held = False       # as the app does: what arrives during a hold doesn't play
+        self.cuts = []
+        self.resumes = []
 
     async def connect(self, approve=None):
         """Logs in for this run. With approve, the login carries the fingerprint's signature."""
@@ -125,13 +139,20 @@ class FakePhone:
                     if not self.speech:
                         self.send({"t": "played", "rtt": 0})
                     self.speech.append((now, gen, payload[SPEECH_HEADER.size:]))
+                    self._leak(payload[SPEECH_HEADER.size:])
             elif kind == CONTROL:
                 message = json.loads(payload)
                 if message["t"] == "sessions":
                     self.sessions = message
                     self.on_sessions.set()
                 elif message["t"] == "cut":
+                    if message["gen"] > self.cut_gen:
+                        self.cuts.append(now)
                     self.cut_gen = message["gen"]
+                    self.held = False
+                elif message["t"] == "resume":
+                    self.resumes.append(now)
+                    self.held = False
                 elif message["t"] == "nonce":
                     self.nonce = message["nonce"]
                     self.nonce_ready.set()
@@ -144,12 +165,30 @@ class FakePhone:
                         self.send({"t": "confirmed", "nonce": message["nonce"], "sig": sign(self.key, spoken)})
                 self.events.append((now, message["t"] + ":" + str(message.get("kind", ""))))
 
+    def _leak(self, packet):
+        if self.leak_gain is None or self.held:
+            return
+        if self.leak_decoder is None:
+            self.leak_decoder = OpusDecoder()
+        heard = self.leak_decoder.decode(packet)
+        self.leak = np.concatenate((self.leak, (heard * self.leak_gain).astype(np.int16)))
+
+    def hold(self, hold_id=1):
+        self.held = True    # what already reached the mic's queue still plays, like Bluetooth's tail
+        self.send({"t": "hold", "id": hold_id})
+
     async def send_mic(self, samples):
         """Real time: one 20 ms packet every 20 ms."""
         started = time.monotonic()
         step = 320
         for i in range(0, len(samples) - step + 1, step):
-            piece = av.AudioFrame.from_ndarray(samples[i:i + step].reshape(1, -1), format="s16", layout="mono")
+            chunk = samples[i:i + step]
+            if len(self.leak):
+                leaked = self.leak[:step]
+                self.leak = self.leak[step:]
+                chunk = chunk.copy()
+                chunk[:len(leaked)] = np.clip(chunk[:len(leaked)].astype(np.int32) + leaked, -32768, 32767)
+            piece = av.AudioFrame.from_ndarray(chunk.reshape(1, -1), format="s16", layout="mono")
             piece.rate = 16000
             piece.pts = self.pts
             self.pts += step
@@ -211,6 +250,11 @@ async def main():
     parser.add_argument("--session", help="pick the session whose name holds this text")
     parser.add_argument("--say", action="append", default=[], help="a 16 kHz mono WAV to speak; repeatable")
     parser.add_argument("--tap-after", type=float, help="seconds after the first reply audio to tap")
+    parser.add_argument("--talk-over", help="a 16 kHz mono WAV to speak over the reply")
+    parser.add_argument("--talk-after", type=float, default=1, help="seconds into the reply to talk over it")
+    parser.add_argument("--leak-db", type=float, help="play the reply back into the mic at about this level")
+    parser.add_argument("--false-hold-after", type=float, help="seconds into the reply to send a hold with no voice")
+    parser.add_argument("--voice", help="choose this voice first")
     parser.add_argument("--wait", type=float, default=30, help="seconds to wait for each reply")
     parser.add_argument("--quiet-after", type=float, default=1.5, help="reply ended after this much quiet")
     parser.add_argument("--gap", type=float, default=2, help="seconds of quiet between clips")
@@ -240,6 +284,10 @@ async def main():
     if not answer.get("approved"):
         raise SystemExit("the gateway refused the start: %s" % answer.get("refused"))
     print("started with", pick["name"], flush=True)
+    if args.voice:
+        phone.send({"t": "voice", "id": args.voice})
+    if args.leak_db is not None:
+        phone.leak_gain = 10 ** (args.leak_db / 20) / LOUDNESS_OF_REPLY
 
     silence = np.zeros(16000, dtype=np.int16)
     await phone.send_mic(silence)
@@ -253,6 +301,8 @@ async def main():
         feeder = asyncio.ensure_future(phone.send_mic(np.zeros(16000 * int(args.wait + 5), dtype=np.int16)))
         end = spoke + args.wait
         tapped = False
+        talked = False
+        false_held = None
         while time.monotonic() < end:
             await asyncio.sleep(0.05)
             now = time.monotonic()
@@ -261,18 +311,45 @@ async def main():
                     phone.send({"t": "tap"})
                     tapped = time.monotonic()
                     print("tapped at %.2f" % (tapped - spoke), flush=True)
-                if now > phone.speech[-1][0] + args.quiet_after:
+                if args.false_hold_after is not None and false_held is None \
+                        and now > phone.speech[0][0] + args.false_hold_after:
+                    false_held = now
+                    phone.hold()
+                    await asyncio.sleep(0)
+                if args.talk_over and not talked and now > phone.speech[0][0] + args.talk_after:
+                    talked = now
+                    feeder.cancel()
+                    voice = asyncio.ensure_future(phone.send_mic(load_wav(args.talk_over)))
+                    await asyncio.sleep(0.06)   # the phone's gate needs three 20 ms frames
+                    phone.hold()
+                    await voice
+                    feeder = asyncio.ensure_future(phone.send_mic(np.zeros(16000 * int(args.wait + 5), dtype=np.int16)))
+                    end = time.monotonic() + args.wait
+                waiting_for_answer = talked and not (phone.cuts and phone.speech[-1][1] >= phone.cut_gen
+                                                     and phone.speech[-1][0] > phone.cuts[-1])
+                if now > phone.speech[-1][0] + args.quiet_after and not waiting_for_answer:
                     break
         feeder.cancel()
-        tone = next((t for t, what in phone.events if what.startswith("tone")), None)
         first = phone.speech[0][0] if phone.speech else None
         result = {
             "clip": os.path.basename(path),
-            "tone_s": round(tone - spoke, 3) if tone else None,
+            "clip_ended_at": round(spoke, 3),   # on this Mac's monotonic clock, like the gateway's last_voice_at
             "first_audio_s": round(first - spoke, 3) if first else None,
             "reply_audio_s": round(len(phone.speech) * 0.02, 2),
             "events": sorted({what for _, what in phone.events}),
         }
+        if talked:
+            result["cut_after_talk_s"] = next((round(t - talked, 3) for t in phone.cuts if t > talked), None)
+            gens = sorted({gen for _, gen, _ in phone.speech})
+            result["reply_generations"] = gens
+            result["answer_after_cut_s"] = next((round(t - phone.cuts[-1], 3) for t, gen, _ in phone.speech
+                                                  if phone.cuts and gen >= phone.cut_gen and t > phone.cuts[-1]), None)
+        if false_held:
+            result["resume_after_hold_s"] = next((round(t - false_held, 3) for t in phone.resumes if t > false_held), None)
+            result["audio_after_resume_s"] = round(sum(0.02 for t, _, _ in phone.speech if t > false_held), 2)
+            result["cut"] = any(t > false_held for t in phone.cuts)
+        if args.leak_db is not None:
+            result["cuts"] = len(phone.cuts)
         if speech and phone.speech:
             result["heard"] = speech.transcribe(to_mic_rate(decode_speech([p for _, _, p in phone.speech])))
         results.append(result)
