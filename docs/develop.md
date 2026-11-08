@@ -3,7 +3,7 @@
 ## How the pieces connect
 
 ```text
-DJI transmitter --radio--> USB receiver --> AudioRecord (VOICE_RECOGNITION, preferred USB input)
+Mic transmitter --radio--> USB receiver --> AudioRecord (VOICE_RECOGNITION, preferred USB input)
                                                |
 Earbuds <--A2DP-- AudioTrack (USAGE_MEDIA, preferred Bluetooth output)
                                                |

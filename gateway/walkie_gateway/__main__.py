@@ -25,7 +25,7 @@ UNREADABLE = "Can't read %s: %s. Nothing was changed. Fix the file, or move it a
 
 
 def warn_if_vpn_blocks_tailscale():
-    """Mullvad blocks Tailscale to the phone. This only reads its status."""
+    """Some VPNs block Tailscale to the phone. Only Mullvad is detected, and only its status is read."""
     if not shutil.which("mullvad"):
         return
     try:
@@ -33,7 +33,7 @@ def warn_if_vpn_blocks_tailscale():
     except (OSError, subprocess.TimeoutExpired):
         return
     if out.split()[:1] in (["Connected"], ["Connecting"]):
-        print("Warning: Mullvad is connected, which blocks Tailscale. Run: mullvad disconnect", flush=True)
+        print("Warning: a VPN that blocks Tailscale is connected. Turn it off.", flush=True)
 
 
 def keep_mac_awake():

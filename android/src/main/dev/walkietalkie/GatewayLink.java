@@ -246,7 +246,7 @@ final class GatewayLink {
         }
         if (e instanceof SocketTimeoutException) {
             return s.isConnected() ? "Your Mac answered, then went quiet"
-                    : "Can't reach your Mac. Turn off Mullvad, check Tailscale on both devices, and check the Mac is awake";
+                    : "Can't reach your Mac. Turn off any VPN that blocks Tailscale, check Tailscale on both devices, and check the Mac is awake";
         }
         if (e instanceof ConnectException && String.valueOf(e.getMessage()).contains("ECONNREFUSED")) {
             return "Your Mac is on, but the gateway isn't running. Start it on the Mac";
