@@ -281,13 +281,13 @@ public class TalkService extends Service implements GatewayLink.Listener, Speake
 
         String text;
         if (!micOk) {
-            text = "Plug in the DJI receiver. The mic is off until then.";
+            text = "Plug in the mic's USB receiver. The mic is off until then.";
         } else if (silenced) {
             text = "Android has silenced the mic. Another app may have taken it.";
         } else if (!soundOk) {
             text = "Connect the earbuds. Replies are silent until then.";
         } else {
-            text = link.connected() ? "Listening on the DJI" : "Connecting to the Mac";
+            text = link.connected() ? "Listening on the USB mic" : "Connecting to the Mac";
         }
         if (!text.equals(shownText)) {
             shownText = text;

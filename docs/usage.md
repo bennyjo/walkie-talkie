@@ -70,10 +70,10 @@ Pick a voice under **Voice** in the app, once you've tapped **Start**. All 11 co
 | Symptom | Likely cause and fix |
 | --- | --- |
 | `Can't listen on 100.x.y.z` | Tailscale is stopped on the Mac. Connect it |
-| `Warning: Mullvad is connected` | Mullvad blocks Tailscale. Run `mullvad disconnect` |
+| `Warning: a VPN that blocks Tailscale is connected` | Turn off the VPN |
 | `Missing ... Run gateway/fetch-models.sh` | The speech models aren't downloaded yet |
 | The app says "Connecting to the Mac" | Check Tailscale on both ends, and that the gateway is running |
-| The app says "Can't reach your Mac" | Turn off Mullvad, check Tailscale on both ends, and check the Mac is awake |
+| The app says "Can't reach your Mac" | Turn off any VPN that blocks Tailscale, check Tailscale on both ends, and check the Mac is awake |
 | The app says "the gateway isn't running" | Start it on the Mac |
 | The app says "Your Mac refused this phone" | The pairing was revoked, or the phone's address changed. Wait a minute, then tap **Pair again** if it still fails |
 | No sessions in the app | No session has the mod running. Type `/reload-plugins` in a session that started before the install. If it says `0 plugins`, run the install for that session's login. A session in a denied folder, on a login the install didn't name, or in an orchestrated worker never shows. `0 hooks` in that line is normal |
@@ -81,8 +81,8 @@ Pick a voice under **Voice** in the app, once you've tapped **Start**. All 11 co
 | The app says "That session changed a moment ago" | Its list was a moment out of date. Tap **Start** again |
 | **front-desk** isn't in the app's list | The launcher isn't running, it ran in a stripped environment, such as `env -i`, where Claude Code doesn't load mods, or its `CLAUDE_CONFIG_DIR` isn't a login you installed for. Start it from your usual shell |
 | `A front desk is already running` | Another launcher holds this state folder. Stop that one first |
-| "Plug in the DJI receiver" | The input route isn't USB. With Advanced Protection on, plug in the receiver before you lock the phone |
-| Your words aren't picked up | Read **Mic level** in the app while you talk. Speech needs to reach about -45 dB, and 12 dB over the background. If it's lower, raise the DJI's gain, or turn off its noise cancelling |
+| "Plug in the mic's USB receiver" | The input route isn't USB. With Advanced Protection on, plug in the receiver before you lock the phone |
+| Your words aren't picked up | Read **Mic level** in the app while you talk. Speech needs to reach about -45 dB, and 12 dB over the background. If it's lower, raise the mic's gain, or turn off its noise cancelling |
 | A reply doesn't stop when you talk over it | Keep talking for about a second, as loud as your last message. Your voice also has to beat **earbud leak** in the app by about 8 dB. If you've just spoken much closer to the mic, say something first in your normal voice. Otherwise, lower the volume, or tap |
 | A reply keeps pausing for a moment or cuts off on its own, or a stray message reaches the session | Loud leak or a noisy place. The app learns the leak as replies play, but it can take a dozen pauses in the first reply after it starts. An echo that lasts past about half a second usually teaches it nothing, and neither does one about as loud as your last message. The exception is a talk-over of four words or fewer that cuts the reply and repeats what just played: it teaches the leak even at that level, and even if it was you. Until you've spoken once since the gateway started, any shorter speech counts as leak, even your own voice. If it goes on, lower the volume |
 | The earbud tap pauses music instead | Another media app took the tap. Close it, and tap again |

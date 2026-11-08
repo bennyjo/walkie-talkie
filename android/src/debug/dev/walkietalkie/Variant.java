@@ -12,7 +12,7 @@ import java.nio.ByteOrder;
 import java.util.Arrays;
 
 /**
- * The emulator's build, which has no DJI receiver or earbuds. It accepts the emulator's address for
+ * The emulator's build, which has no USB mic receiver or earbuds. It accepts the emulator's address for
  * the Mac, takes its microphone from a file pushed with adb, and accepts any audio route while a
  * file named any-route exists. Without that file, the privacy guards behave as on a phone. Never
  * install this one on a phone: build.sh makes it only when asked with --debug, under its own package

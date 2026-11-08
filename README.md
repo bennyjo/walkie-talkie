@@ -43,10 +43,10 @@ Your words reach the session as a normal prompt, so the session works as it does
 ## What you need
 
 - A Mac on Apple silicon with [uv](https://docs.astral.sh/uv/). The speech models take about 1 GB, and downloading them needs about 2 GB free.
-- [Tailscale](https://tailscale.com/) connected on the Mac and the phone. A VPN that blocks Tailscale, such as Mullvad, has to be off.
+- [Tailscale](https://tailscale.com/) connected on the Mac and the phone. A VPN that blocks Tailscale has to be off.
 - Claude Code 2.1.318 or later.
 - An Android phone on Android 13 or later, with a fingerprint set up.
-- A USB audio input for the phone, such as a wireless collar mic's USB receiver. This was designed for the DJI Mic Mini 2.
+- A USB audio input for the phone, such as a wireless collar mic's USB receiver.
 - Bluetooth earbuds.
 
 ## Quick start

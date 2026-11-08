@@ -421,7 +421,7 @@ public class MainActivity extends Activity {
         renderSessions(status);
         renderVoices(status);
         show(details, status.running ? detailsText(status)
-                : "Plug in the DJI receiver and connect the earbuds before you start.");
+                : "Plug in the mic's USB receiver and connect the earbuds before you start.");
     }
 
     /** Changes the text only when it changed, so an idle screen does no drawing. */
@@ -577,7 +577,7 @@ public class MainActivity extends Activity {
         switch (type) {
             case AudioDeviceInfo.TYPE_USB_DEVICE:
             case AudioDeviceInfo.TYPE_USB_HEADSET:
-                return "USB (DJI)";
+                return "USB";
             case AudioDeviceInfo.TYPE_BLUETOOTH_A2DP:
                 return "Bluetooth A2DP";
             case AudioDeviceInfo.TYPE_BLE_HEADSET:

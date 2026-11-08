@@ -5,9 +5,9 @@ The [README](../README.md#quick-start) has the short version. This page has ever
 ## What you need
 
 - A Mac on Apple silicon with [uv](https://docs.astral.sh/uv/). The speech models take about 1 GB, and downloading them needs about 2 GB free. uv provides Python if the Mac has no suitable version.
-- [Tailscale](https://tailscale.com/) connected on the Mac and the phone. A VPN that blocks Tailscale, such as Mullvad, has to be off.
+- [Tailscale](https://tailscale.com/) connected on the Mac and the phone. A VPN that blocks Tailscale has to be off.
 - Claude Code 2.1.318 or later. The mods API can still change between Claude Code releases.
-- An Android phone on Android 13 or later, with a fingerprint set up, a USB audio input, and Bluetooth earbuds. This was designed for the DJI Mic Mini 2 receiver.
+- An Android phone on Android 13 or later, with a fingerprint set up, a USB audio input such as a wireless collar mic's USB receiver, and Bluetooth earbuds.
 
 ## On the Mac
 

@@ -17,7 +17,7 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 
 /**
- * The DJI receiver to Opus to the Mac. Sound goes out only while the route is the USB input. It
+ * The mic's USB receiver to Opus to the Mac. Sound goes out only while the route is the USB input. It
  * captures both channels and keeps the louder: a receiver with one transmitter can leave the other
  * silent, and Android's mix down to mono would then halve the voice.
  */
