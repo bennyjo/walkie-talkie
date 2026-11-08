@@ -1,0 +1,12 @@
+# Temporary toolchains, models, and build output. Nothing here is ever committed.
+.toolchain/
+.scratch/
+gateway/.venv/
+__pycache__/
+*.pyc
+android/out/
+*.apk
+*.jks
+*.keystore
+.DS_Store
+mod/walk-voice/.claude-plugin/types/

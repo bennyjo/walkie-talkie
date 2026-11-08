@@ -1,0 +1,1428 @@
+"""The conversation's rules, with stand-ins for the speech models, the phone, and the mod."""
+import asyncio
+import json
+import logging
+import unittest
+from unittest import mock
+
+import numpy as np
+
+from walkie_gateway import conversation as module
+from walkie_gateway.conversation import (
+    CANCELLED,
+    DESK_CANCELLED,
+    DIALOG_OPEN,
+    NO_SESSION,
+    NOT_FILED,
+    NOT_SENT,
+    NOTHING_TO_CONFIRM,
+    NOTHING_TO_TYPE,
+    PERMISSION,
+    REPLY_NOT_SPOKEN,
+    SESSION_GONE,
+    STOPPED_AT_KEYBOARD,
+    YES_NOT_SENT,
+    YES_SENT,
+    Conversation,
+)
+from walkie_gateway.modlink import Session
+from walkie_gateway.turns import WINDOW
+
+SPOKEN_SECONDS = 0.1
+
+
+class FakeSpeech:
+    def transcribe(self, audio):
+        return "what you said"
+
+    unspeakable = ()
+
+    def synthesize(self, text):
+        if text in self.unspeakable:
+            raise RuntimeError("no voice for that")
+        return text  # the fake encoder turns this into frames
+
+
+class FakeEncoder:
+    def encode(self, text):
+        return [("%s:%d" % (text, i)).encode() for i in range(int(SPOKEN_SECONDS / module.FRAME_SECONDS))]
+
+
+class FakeDecoder:
+    def decode(self, packet):
+        return np.frombuffer(packet, dtype=np.int16)
+
+
+class FakePhone:
+    connected = True
+
+    def __init__(self):
+        self.controls = []
+        self.speech = []
+        self.run_id = "run-1"
+        self.approved_run = "run-1"  # a fingerprint started this run
+        self.revoked = False
+
+    @property
+    def approved(self):
+        return self.approved_run is not None and self.approved_run == self.run_id
+
+    def end_run(self):
+        self.approved_run = None
+
+    def send_ended(self, run, why):
+        if run == self.run_id and not self.approved:
+            self.send_control({"t": "ended", "why": why})
+
+    def revoke(self):
+        self.revoked = True
+
+    def signed(self, message, signature):
+        self.last_signed = message
+        return signature == "good"
+
+    def send_control(self, message):
+        self.controls.append(message)
+
+    def send_speech(self, gen, packet):
+        self.speech.append((gen, packet.decode()))
+
+    def forget_speech(self):
+        self.controls.append({"t": "forgot"})
+
+    def said(self):
+        return list(dict.fromkeys(packet.rsplit(":", 1)[0] for _, packet in self.speech))
+
+
+class FakeLink:
+    def __init__(self):
+        self.sessions = {"7": Session("7"), "8": Session("8")}
+        for instance, session in self.sessions.items():
+            session.nonce = "nonce-" + instance
+
+    def prune(self):
+        return False
+
+
+class ConversationTest(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        self.conversation = Conversation(FakeSpeech(), lambda w: bool(w.any()), FakeDecoder, FakeEncoder())
+        self.phone = FakePhone()
+        self.link = FakeLink()
+        self.conversation.phone = self.phone
+        self.conversation.modlink = self.link
+        self.conversation.start()
+        self.session = self.link.sessions["7"]
+
+    async def asyncTearDown(self):
+        self.conversation.stop()
+        await asyncio.sleep(0)
+
+    def choose(self, instance="7"):
+        """What a fingerprint's start does to the routing, without its notice and the mod's grant."""
+        self.conversation._set_chosen(instance)
+
+    def confirm_in_app(self, sig="good"):
+        """The app's fingerprint over the read-back, if a spoken yes asked for one."""
+        asked = [c for c in self.phone.controls if c["t"] == "confirm"]
+        if asked and asked[-1]["nonce"]:
+            self.conversation.phone_message({"t": "confirmed", "nonce": asked[-1]["nonce"], "sig": sig})
+
+    def yes(self):
+        self.finish_turn("Yes.")
+        self.confirm_in_app()
+
+    def order(self):
+        return self.session.orders.popleft()
+
+    def order_for(self, what):
+        return next(order for order in reversed(self.session.orders) if what in order)
+
+    async def settle(self, seconds=0.3):
+        await asyncio.sleep(seconds)
+
+    def tones(self):
+        return [c["kind"] for c in self.phone.controls if c["t"] == "tone"]
+
+    def event(self, **fields):
+        self.conversation.mod_event(self.session, fields)
+
+    def finish_turn(self, text):
+        self.conversation._turn_finished(text, self.conversation.clock())
+
+    # --- the front desk's read-back and yes ----------------------------------------
+
+    def relay(self, note, text):
+        self.event(kind="relay", note=note, text=text)
+
+    async def play_readback(self, text="Say yes to merge the release branch."):
+        self.session.front_desk = True
+        self.choose()
+        self.relay("note-1", text)
+        await self.settle()
+        self.assertTrue(self.conversation.readback, "the reply should have played through")
+
+    # --- what the independent review reproduced -----------------------------------
+
+    async def test_a_cancel_at_a_desk_never_says_a_filed_note_was_cancelled(self):
+        self.session.front_desk = True
+        self.choose()
+        self.finish_turn("Post the launch update.")
+        self.event(kind="order", id=self.order()["id"], ok=True)
+        self.finish_turn("cancel")
+        await self.settle()
+        self.assertIn(DESK_CANCELLED, self.phone.said())
+        self.assertNotIn(CANCELLED, self.phone.said())
+        self.assertIn("already filed still stands", DESK_CANCELLED)
+
+    async def test_a_cancel_in_a_normal_session_still_says_cancelled(self):
+        self.choose()
+        self.finish_turn("cancel")
+        await self.settle()
+        self.assertEqual(self.phone.said(), [CANCELLED])
+
+    async def test_a_failed_hand_off_never_claims_nothing_was_saved(self):
+        # A command can save the note and then fail or hang, so its failure says nothing about the note.
+        await self.play_readback()
+        self.yes()
+        self.event(kind="order", id=self.order()["id"], error="the hand-off command failed")
+        self.event(kind="not-filed")
+        await self.settle()
+        for false_claim in ("nothing will happen", "isn't saved", "Say it again"):
+            self.assertFalse([said for said in self.phone.said() if false_claim in said], false_claim)
+        self.assertIn(YES_NOT_SENT, self.phone.said())
+        self.assertIn(NOT_FILED, self.phone.said())
+        self.assertIn("can't tell", YES_NOT_SENT)
+        self.assertIn("can't tell", NOT_FILED)
+
+    async def test_a_prompt_with_a_reply_held_after_a_tap_is_marked_unheard(self):
+        await self.play_readback("Deploy finished on staging.")
+        self.conversation.phone_message({"t": "tap", "gen": 0})
+        self.order()  # the tap's own abort
+        self.relay("note-2", "Should I delete the old release branches?")
+        await self.settle()
+        self.finish_turn("Good, do that.")
+        order = self.order()
+        self.assertEqual(order["submit"], "Good, do that.")
+        self.assertTrue(order.get("unheard"))
+
+    async def test_a_prompt_with_nothing_held_is_not_marked_unheard(self):
+        await self.play_readback("Deploy finished on staging.")
+        await self.settle()  # past the reply's tail
+        self.finish_turn("Good, do that.")
+        self.assertNotIn("unheard", self.order())
+
+    async def test_a_reply_with_anything_left_out_cannot_take_a_yes(self):
+        self.session.front_desk = True
+        self.choose()
+        for text in ("Delete these: ```rm -rf prod``` Say yes to confirm.",
+                     "Delete /var/data/prod and ~/backup. Say yes to confirm.",
+                     "Delete `prod`. Say yes to confirm."):
+            with self.subTest(text=text):
+                self.relay("note-1", text)
+                await self.settle(0.5)
+                self.assertIsNone(self.conversation.readback)
+                self.yes()
+                await self.settle()
+                self.assertEqual(len(self.session.orders), 0)
+                self.assertIn(NOTHING_TO_CONFIRM, self.phone.said())
+
+    async def test_a_question_is_not_a_yes(self):
+        await self.play_readback()
+        for words in ("Yes?", "Oh, yes?", "Yes -"):
+            with self.subTest(words=words):
+                self.conversation.readback = None
+                self.finish_turn(words)
+                self.assertNotIn("confirm", self.order())
+
+    async def test_a_yes_after_speech_that_lost_its_start_does_not_count(self):
+        await self.play_readback()
+        self.conversation.detector.skip_speech()
+        self.yes()
+        await self.settle()
+        self.assertEqual(len(self.session.orders), 0)
+        self.assertEqual(self.phone.said()[-1], NOTHING_TO_CONFIRM)
+
+    async def test_a_yes_said_before_the_read_back_played_does_not_count(self):
+        await self.play_readback()
+        played = self.conversation.readback.expires - module.READBACK_SECONDS
+        self.conversation._turn_finished("Yes.", played - 1.0)
+        await self.settle()
+        self.assertEqual(len(self.session.orders), 0)
+        self.assertEqual(self.phone.said()[-1], NOTHING_TO_CONFIRM)
+
+    async def test_a_yes_wholly_after_the_read_back_still_counts(self):
+        await self.play_readback()
+        self.yes()
+        self.assertIn("confirm", self.order())
+
+    async def test_a_relayed_reply_is_spoken_word_for_word_with_no_turn(self):
+        await self.play_readback()
+        self.assertEqual(self.phone.said(), ["Say yes to merge the release branch."])
+        self.assertEqual(len(self.session.orders), 0)
+
+    async def test_a_yes_after_the_read_back_goes_to_the_mod_with_the_words_heard(self):
+        await self.play_readback()
+        self.yes()
+        order = self.order()
+        self.assertEqual(order["confirm"], {"note": "note-1", "spoken": "Say yes to merge the release branch."})
+        self.assertEqual(self.tones(), ["ack", "ack"])  # the yes heard, then the fingerprint
+        self.event(kind="order", id=order["id"], ok=True)
+        await self.settle()
+        self.assertEqual(self.phone.said()[-1], YES_SENT)
+
+    async def test_a_yes_that_could_not_be_filed_says_so(self):
+        await self.play_readback()
+        self.yes()
+        self.event(kind="order", id=self.order()["id"], error="the hand-off command failed")
+        await self.settle()
+        self.assertEqual(self.phone.said()[-1], YES_NOT_SENT)
+
+    async def test_a_second_yes_answers_nothing(self):
+        await self.play_readback()
+        self.yes()
+        self.order()
+        self.yes()
+        await self.settle()
+        self.assertEqual(len(self.session.orders), 0)
+        self.assertEqual(self.phone.said()[-1], NOTHING_TO_CONFIRM)
+
+    async def test_a_yes_with_nothing_to_answer_sends_nothing(self):
+        self.session.front_desk = True
+        self.choose()
+        self.yes()
+        await self.settle()
+        self.assertEqual(len(self.session.orders), 0)
+        self.assertEqual(self.phone.said(), [NOTHING_TO_CONFIRM])
+
+    async def test_a_late_yes_sends_nothing(self):
+        await self.play_readback()
+        self.conversation.readback.expires = self.conversation.clock() - 1
+        self.yes()
+        await self.settle()
+        self.assertEqual(len(self.session.orders), 0)
+        self.assertEqual(self.phone.said()[-1], NOTHING_TO_CONFIRM)
+
+    async def test_the_wait_for_a_yes_starts_when_the_read_back_has_played(self):
+        await self.play_readback()
+        left = self.conversation.readback.expires - self.conversation.clock()
+        self.assertAlmostEqual(left, module.READBACK_SECONDS, delta=2)
+
+    async def test_a_yes_while_the_read_back_is_still_queued_answers_nothing(self):
+        self.session.front_desk = True
+        self.choose()
+        self.relay("note-1", "Say yes to merge the release branch.")
+        self.yes()
+        self.assertEqual(len(self.session.orders), 0)
+
+    async def test_a_tap_leaves_nothing_to_say_yes_to(self):
+        await self.play_readback()
+        self.conversation.phone_message({"t": "tap", "gen": 0})
+        self.order()  # the tap's own abort
+        self.yes()
+        await self.settle()
+        self.assertEqual(len(self.session.orders), 0)
+        self.assertEqual(self.phone.said()[-1], NOTHING_TO_CONFIRM)
+
+    async def test_a_tap_during_the_read_back_leaves_nothing_to_say_yes_to(self):
+        self.session.front_desk = True
+        self.choose()
+        self.relay("note-1", "Say yes to merge the release branch.")
+        self.conversation.phone_message({"t": "tap", "gen": 0})
+        await self.settle()
+        self.assertIsNone(self.conversation.readback)
+
+    async def test_another_prompt_leaves_nothing_to_say_yes_to(self):
+        await self.play_readback()
+        self.finish_turn("What's the status?")
+        self.assertEqual(self.order()["submit"], "What's the status?")
+        self.yes()
+        self.assertEqual(len(self.session.orders), 0)
+
+    async def test_a_cough_leaves_the_read_back_open(self):
+        await self.play_readback()
+        self.finish_turn("um")
+        self.yes()
+        self.assertIn("confirm", self.order())
+
+    async def test_a_yes_answers_only_the_newest_reply(self):
+        await self.play_readback()
+        self.relay("note-2", "The build passed.")
+        await self.settle()
+        self.yes()
+        self.assertEqual(self.order()["confirm"]["note"], "note-2")
+
+    async def test_a_new_reply_closes_the_old_read_back_before_it_plays(self):
+        await self.play_readback()
+        self.relay("note-2", "The build passed.")
+        self.yes()
+        self.assertEqual(len(self.session.orders), 0)
+
+    async def test_a_reply_cut_short_or_unspeakable_cannot_take_a_yes(self):
+        self.session.front_desk = True
+        self.choose()
+        self.relay("note-1", "`git push`")
+        await self.settle()
+        self.assertIsNone(self.conversation.readback)
+        self.relay("note-2", "Long sentence here. " * 100)
+        await self.settle(0.5)
+        self.assertIsNone(self.conversation.readback)
+
+    async def test_a_yes_to_a_session_that_is_no_front_desk_is_an_ordinary_prompt(self):
+        self.choose()
+        self.yes()
+        self.assertEqual(self.order()["submit"], "Yes.")
+
+    async def test_a_relay_from_a_session_not_chosen_is_not_spoken(self):
+        self.session.front_desk = True
+        self.relay("note-1", "Say yes to merge the release branch.")
+        await self.settle()
+        self.assertEqual(self.phone.said(), [])
+
+    def answer(self, order, text):
+        self.event(kind="turn-start", turnId="turn-1", order=order["id"])
+        self.event(kind="text", turnId="turn-1", text=text)
+        self.event(kind="turn-end", turnId="turn-1", reason="answer")
+
+    async def test_a_tap_cuts_only_the_reply_playing_and_the_rest_wait_for_the_next_response(self):
+        self.session.front_desk = True
+        self.choose()
+        with mock.patch(__name__ + ".SPOKEN_SECONDS", 1.0):
+            self.relay("note-1", "The build passed.")
+            self.relay("note-2", "The deploy failed.")
+            await self.settle()
+            self.assertEqual(self.phone.said(), ["The build passed."])
+            self.conversation.phone_message({"t": "tap", "gen": 0})
+        self.relay("note-3", "Say yes to merge the release branch.")
+        self.finish_turn("um")
+        await self.settle()
+        self.assertEqual(self.phone.said(), ["The build passed."])
+        self.finish_turn("What's the status?")
+        await self.settle()
+        self.assertEqual(self.phone.said(), ["The build passed."])
+        self.answer(self.order_for("submit"), "Two workers are running.")
+        await self.settle()
+        self.assertEqual(self.phone.said(), [
+            "The build passed.", "Two workers are running.", "The deploy failed.",
+            "Say yes to merge the release branch.",
+        ])
+        self.assertEqual(self.conversation.readback.note, "note-3")
+
+    async def test_a_tap_during_the_response_keeps_the_replies_waiting(self):
+        self.session.front_desk = True
+        self.choose()
+        self.conversation.phone_message({"t": "tap", "gen": 0})
+        self.relay("note-1", "The build passed.")
+        self.finish_turn("What's the status?")
+        order = self.order_for("submit")
+        self.event(kind="turn-start", turnId="turn-1", order=order["id"])
+        self.conversation.phone_message({"t": "tap", "gen": 0})
+        self.event(kind="turn-end", turnId="turn-1", reason="aborted")
+        await self.settle()
+        self.assertEqual(self.phone.said(), [])
+        self.finish_turn("What's the build doing?")
+        self.answer(self.order_for("submit"), "It's running.")
+        await self.settle()
+        self.assertEqual(self.phone.said(), ["It's running.", "The build passed."])
+
+    async def test_a_tap_does_not_silence_a_failed_hand_off_or_release_the_replies_waiting(self):
+        self.session.front_desk = True
+        self.choose()
+        self.relay("note-1", "The build passed.")
+        self.conversation.phone_message({"t": "tap", "gen": 0})
+        self.relay("note-2", "The deploy failed.")
+        self.finish_turn("Merge the release branch.")
+        order = self.order_for("submit")
+        self.event(kind="turn-start", turnId="desk-1", order=order["id"])
+        self.conversation.phone_message({"t": "tap", "gen": 0})
+        self.event(kind="not-filed")
+        self.event(kind="turn-end", turnId="desk-1", reason="answer")
+        await self.settle()
+        self.assertEqual(self.phone.said(), [NOT_FILED])
+
+    async def test_a_yes_with_replies_waiting_hears_its_notice_first_and_the_newest_can_take_the_next_yes(self):
+        self.session.front_desk = True
+        self.choose()
+        self.conversation.phone_message({"t": "tap", "gen": 0})
+        self.relay("note-1", "Say yes to merge the release branch.")
+        self.yes()
+        await self.settle()
+        self.assertEqual(self.phone.said(), [NOTHING_TO_CONFIRM, "Say yes to merge the release branch."])
+        self.session.orders.clear()
+        self.yes()
+        self.assertEqual(self.order()["confirm"]["note"], "note-1")
+
+    async def test_a_tap_before_a_reply_sounds_keeps_that_reply(self):
+        self.session.front_desk = True
+        self.choose()
+        self.relay("note-1", "The build passed.")
+        self.conversation.phone_message({"t": "tap", "gen": 0})
+        await self.settle()
+        self.assertEqual(self.phone.said(), [])
+        self.finish_turn("Cancel.")
+        await self.settle()
+        self.assertIn("The build passed.", self.phone.said())
+
+    async def test_a_second_tap_keeps_the_replies_already_waiting(self):
+        self.session.front_desk = True
+        self.choose()
+        self.conversation.phone_message({"t": "tap", "gen": 0})
+        self.relay("note-1", "The build passed.")
+        self.conversation.phone_message({"t": "tap", "gen": 0})
+        self.finish_turn("Cancel.")
+        await self.settle()
+        self.assertIn("The build passed.", self.phone.said())
+
+    async def test_a_new_run_or_a_session_switch_drops_the_waiting_replies(self):
+        self.session.front_desk = True
+        for cut in (self.conversation.phone_new_run, lambda: self.choose("8")):
+            with self.subTest(cut=cut):
+                self.choose()
+                self.conversation.phone_message({"t": "tap", "gen": 0})
+                self.relay("note-1", "The build passed.")
+                cut()
+                self.choose()
+                self.finish_turn("Cancel.")
+                await self.settle()
+                self.assertNotIn("The build passed.", self.phone.said())
+
+    async def test_a_newer_reply_that_cannot_take_a_yes_ends_the_wait_for_an_older_one(self):
+        self.session.front_desk = True
+        self.choose()
+        self.relay("note-1", "Say yes to merge the release branch.")
+        self.relay("note-2", "`git push`")
+        await self.settle()
+        self.yes()
+        await self.settle()
+        self.assertEqual(len(self.session.orders), 0)
+        self.assertEqual(self.phone.said()[-1], NOTHING_TO_CONFIRM)
+
+    async def test_a_reply_with_a_newer_one_queued_cannot_take_a_yes(self):
+        self.session.front_desk = True
+        self.choose()
+        with mock.patch(__name__ + ".SPOKEN_SECONDS", 0.02):
+            self.relay("note-1", "Say yes to merge the release branch.")
+            self.relay("note-2", "The build passed.")
+            for _ in range(200):
+                await asyncio.sleep(0.005)
+                if not self.conversation._queued_relays():
+                    break
+                self.assertIsNone(self.conversation.readback)
+        self.assertEqual(self.conversation.readback.note, "note-2")
+
+    async def test_a_reply_that_cannot_be_synthesized_gets_a_notice_and_the_next_one_plays(self):
+        self.session.front_desk = True
+        self.choose()
+        self.conversation.speech.unspeakable = ("Merge the release branch.",)
+        with self.assertLogs("walkie.conversation", "ERROR"):
+            self.relay("note-1", "Merge the release branch. Say yes to confirm.")
+            await self.settle()
+        self.assertEqual(self.phone.said(), [REPLY_NOT_SPOKEN])
+        self.assertIsNone(self.conversation.readback)
+        with self.assertLogs("walkie.conversation", "ERROR"):
+            self.relay("note-2", "Merge the release branch. Say yes to confirm.")
+            self.relay("note-3", "The build passed.")
+            await self.settle()
+        self.assertEqual(self.phone.said()[-1], "The build passed.")
+        self.yes()
+        self.assertEqual(self.order()["confirm"]["note"], "note-3")
+
+    async def test_a_failed_newer_reply_leaves_no_older_read_back_to_say_yes_to(self):
+        self.session.front_desk = True
+        self.choose()
+        self.conversation.speech.unspeakable = ("The deploy failed.",)
+        with self.assertLogs("walkie.conversation", "ERROR"):
+            self.relay("note-1", "Say yes to merge the release branch.")
+            self.relay("note-2", "The deploy failed.")
+            await self.settle()
+        self.assertEqual(self.phone.said(), ["Say yes to merge the release branch.", REPLY_NOT_SPOKEN])
+        self.assertIsNone(self.conversation.readback)
+
+    # --- confirming in the app ----------------------------------------------------
+
+    async def test_a_spoken_yes_alone_sends_nothing_and_asks_for_the_app(self):
+        await self.play_readback()
+        self.finish_turn("Yes.")
+        await self.settle()
+        self.assertEqual(len(self.session.orders), 0)
+        asked = [c for c in self.phone.controls if c["t"] == "confirm"][-1]
+        self.assertEqual(asked["text"], "Say yes to merge the release branch.")
+        self.assertEqual(self.phone.said()[-1], module.CONFIRM_IN_APP)
+
+    async def test_the_fingerprint_signs_the_exact_words_heard(self):
+        await self.play_readback()
+        self.yes()
+        nonce = [c for c in self.phone.controls if c["t"] == "confirm"][0]["nonce"]
+        self.assertEqual(self.phone.last_signed,
+                         module.security.confirm_message(nonce, "Say yes to merge the release branch."))
+
+    async def test_a_bad_signature_confirms_nothing(self):
+        await self.play_readback()
+        self.finish_turn("Yes.")
+        self.confirm_in_app(sig="forged")
+        await self.settle()
+        self.assertEqual(len(self.session.orders), 0)
+        self.assertEqual(self.phone.said()[-1], module.NOT_CONFIRMED)
+        self.confirm_in_app()  # and it can't be tried again
+        self.assertEqual(len(self.session.orders), 0)
+
+    async def test_declining_in_the_app_confirms_nothing(self):
+        await self.play_readback()
+        self.finish_turn("Yes.")
+        nonce = [c for c in self.phone.controls if c["t"] == "confirm"][-1]["nonce"]
+        self.conversation.phone_message({"t": "declined", "nonce": nonce})
+        self.confirm_in_app()
+        await self.settle()
+        self.assertEqual(len(self.session.orders), 0)
+        self.assertEqual(self.phone.said()[-1], module.NOT_CONFIRMED)
+
+    async def test_a_late_fingerprint_confirms_nothing(self):
+        await self.play_readback()
+        self.finish_turn("Yes.")
+        nonce, readback, _ = self.conversation.confirming
+        self.conversation.confirming = (nonce, readback, self.conversation.clock() - 1)
+        self.confirm_in_app()
+        self.assertEqual(len(self.session.orders), 0)
+
+    async def withdrawn_by(self, cut):
+        await self.play_readback()
+        self.finish_turn("Yes.")
+        cut()
+        self.assertEqual([c for c in self.phone.controls if c["t"] == "confirm"][-1], {"t": "confirm", "nonce": None})
+        self.session.orders.clear()
+        self.confirm_in_app()
+        self.assertEqual(len(self.session.orders), 0)
+
+    async def test_a_tap_withdraws_the_app_confirmation(self):
+        await self.withdrawn_by(lambda: self.conversation.phone_message({"t": "tap", "gen": 0}))
+
+    async def test_another_prompt_withdraws_the_app_confirmation(self):
+        await self.withdrawn_by(lambda: self.finish_turn("What's the status?"))
+
+    # --- a run, from a fingerprint to its end --------------------------------------
+
+    async def test_a_fingerprint_chooses_the_session_hands_the_mod_its_grant_and_names_it(self):
+        self.session.cwd = "/work/project"
+        grant = {"session": "7", "modNonce": "nonce-7", "nonce": "n", "run": "run-1", "sig": "s"}
+        self.assertIsNone(self.conversation.start_problem("7", "nonce-7"))
+        self.conversation.phone_approved(grant)
+        self.assertEqual(self.conversation.chosen, "7")
+        self.assertEqual(self.order(), {"grant": grant})
+        await self.settle()
+        self.assertEqual(self.phone.said(), ["Connected to project."])
+
+    async def test_only_the_chosen_session_hears_the_run_the_fingerprint_approved_and_only_until_it_ends(self):
+        # The mod keeps its grant only while answers name this run, so a listener that never asked the gateway can't ride it.
+        self.conversation.phone_approved({"session": "7", "modNonce": "nonce-7", "nonce": "n", "run": "run-1", "sig": "s"})
+        self.assertEqual(self.conversation.chosen_run(self.session), "run-1")
+        self.assertIsNone(self.conversation.chosen_run(self.link.sessions["8"]))
+        self.conversation.phone_message({"t": "release"})
+        self.assertIsNone(self.conversation.chosen_run(self.session))
+
+    async def test_only_the_challenge_the_phone_saw_can_start_a_session(self):
+        self.assertEqual(self.conversation.start_problem("7", "nonce-8"), "changed")
+        self.session.nonce = ""
+        self.assertEqual(self.conversation.start_problem("7", ""), "gone")
+
+    async def ended(self):
+        return [c["why"] for c in self.phone.controls if c["t"] == "ended"]
+
+    async def test_stop_ends_the_run(self):
+        self.choose()
+        self.conversation.phone_message({"t": "release"})
+        self.assertIsNone(self.conversation.chosen)
+        self.assertFalse(self.phone.approved)
+
+    async def test_the_mod_letting_go_ends_the_run_and_says_so(self):
+        with mock.patch.object(module, "ENDED_AFTER_SECONDS", 0.05):
+            self.choose()
+            self.event(kind="grant-ended", reason="none")
+            self.assertIsNone(self.conversation.chosen)
+            self.assertFalse(self.phone.approved)
+            self.assertEqual(await self.ended(), [])
+            await self.settle()
+        self.assertEqual(self.phone.said(), [module.SESSION_CLOSED])
+        self.assertEqual(await self.ended(), ["closed"])
+
+    async def test_an_unchosen_session_cannot_end_the_run(self):
+        self.choose()
+        self.conversation.mod_event(self.link.sessions["8"], {"kind": "grant-ended"})
+        self.assertEqual(self.conversation.chosen, "7")
+        self.assertTrue(self.phone.approved)
+
+    async def test_a_session_that_goes_ends_the_run(self):
+        with mock.patch.object(module, "ENDED_AFTER_SECONDS", 0.05):
+            self.choose()
+            self.event(kind="bye")
+            await self.settle()
+        self.assertFalse(self.phone.approved)
+        self.assertEqual(await self.ended(), ["gone"])
+
+    async def test_an_ended_notice_never_ends_a_newer_run(self):
+        with mock.patch.object(module, "ENDED_AFTER_SECONDS", 0.05):
+            self.choose()
+            self.event(kind="grant-ended")
+            self.phone.run_id = self.phone.approved_run = "run-2"  # Start again at once
+            await self.settle()
+        self.assertEqual(await self.ended(), [])
+
+    async def test_thirty_minutes_with_nothing_said_ends_the_run(self):
+        self.choose()
+        self.conversation.active_at -= module.IDLE_SECONDS - 5
+        self.conversation._check_run()
+        self.assertTrue(self.phone.approved)
+        self.finish_turn("Still here.")
+        self.conversation.active_at -= module.IDLE_SECONDS + 1
+        self.conversation._check_run()
+        self.assertFalse(self.phone.approved)
+        self.assertIsNone(self.conversation.chosen)
+        await self.settle()
+        self.assertIn(module.IDLE_ENDED, self.phone.said())
+
+    async def test_a_reply_still_coming_keeps_the_run(self):
+        self.choose()
+        self.event(kind="turn-start", turnId="long")
+        self.conversation.active_at -= module.IDLE_SECONDS + 1
+        self.conversation._check_run()
+        self.assertTrue(self.phone.approved)
+
+    async def test_a_phone_gone_two_minutes_ends_the_run_with_nobody_to_tell(self):
+        self.choose()
+        self.phone.connected = False
+        self.conversation._check_run()
+        self.assertTrue(self.phone.approved)
+        self.conversation.lost_at -= module.PHONE_LOST_SECONDS - 5
+        self.conversation._check_run()
+        self.assertTrue(self.phone.approved)  # back within the time: nothing changes
+        self.conversation.lost_at -= 10
+        self.conversation._check_run()
+        self.assertFalse(self.phone.approved)
+        self.assertIsNone(self.conversation.chosen)
+        self.assertEqual(self.phone.said(), [])
+
+    async def test_a_phone_back_in_time_keeps_the_run(self):
+        self.choose()
+        self.phone.connected = False
+        self.conversation._check_run()
+        self.phone.connected = True
+        self.conversation._check_run()
+        self.assertIsNone(self.conversation.lost_at)
+
+    async def test_revoking_ends_the_run_and_the_pairing(self):
+        self.choose()
+        self.conversation.revoke_phone()
+        self.assertIsNone(self.conversation.chosen)
+        self.assertFalse(self.phone.approved)
+        self.assertTrue(self.phone.revoked)
+
+    async def test_the_list_shows_the_latest_prompt_first_and_only_sessions_that_check_fingerprints(self):
+        self.link.sessions["7"].prompted_at = 1000
+        self.link.sessions["8"].prompted_at = 2000
+        self.link.sessions["9"] = Session("9")  # a mod from before fingerprints
+        self.conversation.sessions_changed()
+        listed = self.phone.controls[-1]["list"]
+        self.assertEqual([s["id"] for s in listed], ["8", "7"])
+        self.assertEqual(listed[0]["nonce"], "nonce-8")
+
+    # --- routing -----------------------------------------------------------------
+
+    async def test_speech_goes_only_to_the_chosen_session(self):
+        self.choose()
+        self.finish_turn("Fix the failing test.")
+        self.assertEqual(self.tones(), ["ack"])
+        order = self.order()
+        self.assertEqual(order["submit"], "Fix the failing test.")
+        self.assertEqual(len(self.link.sessions["8"].orders), 0)
+
+    async def test_nothing_is_routed_until_a_session_is_chosen(self):
+        self.finish_turn("Fix the failing test.")
+        await self.settle()
+        self.assertEqual(len(self.session.orders), 0)
+        self.assertEqual(self.phone.said(), [NO_SESSION])
+        self.assertEqual(self.tones(), ["warn"])
+
+    async def test_a_session_that_does_not_exist_cannot_be_started(self):
+        self.assertEqual(self.conversation.start_problem("nope", "nonce-nope"), "gone")
+
+    async def test_a_phone_message_can_no_longer_choose_a_session(self):
+        self.conversation.phone_message({"t": "select", "session": "7"})
+        self.assertIsNone(self.conversation.chosen)
+
+    async def test_noise_goes_nowhere(self):
+        self.choose()
+        self.finish_turn("um")
+        await self.settle()
+        self.assertEqual(len(self.session.orders), 0)
+        self.assertEqual(self.tones(), [])
+
+    async def test_cancel_stops_what_is_running_like_a_tap(self):
+        self.choose()
+        self.event(kind="turn-start", turnId="t1")
+        self.finish_turn("Oh never mind, cancel.")
+        await self.settle()
+        self.assertEqual(self.order()["abort"], "t1")
+        self.assertEqual(self.tones(), ["ack"])
+        self.assertEqual(self.phone.said(), [CANCELLED])
+
+    async def test_cancel_sends_no_words_to_the_session(self):
+        self.choose()
+        self.finish_turn("Cancel.")
+        order = self.order()
+        self.assertEqual(order["abort"], None)
+        self.assertNotIn("submit", order)
+
+    async def test_cancel_drops_the_queue_and_says_so(self):
+        # What the adversarial review heard: "Cancelled.", and about 5 s later the queued prompt ran.
+        self.choose()
+        self.finish_turn("Delete the old release branch.")
+        queued = self.order()["id"]
+        self.event(kind="order", id=queued, accepted=True, busy=True)
+        await self.settle()
+        self.finish_turn("Cancel.")
+        abort = self.order()["id"]
+        self.event(kind="order", id=queued, dropped=True)
+        self.event(kind="order", id=abort, ok=True, dropped=True)
+        await self.settle()
+        self.assertEqual(self.phone.said(), [module.QUEUED, CANCELLED, module.QUEUE_DROPPED])
+        self.assertEqual(self.conversation.orders, {})
+
+    async def test_cancel_with_no_session_still_answers(self):
+        self.finish_turn("Cancel.")
+        await self.settle()
+        self.assertEqual(self.phone.said(), [CANCELLED])
+
+    async def test_a_prompt_that_ends_with_the_word_cancel_reaches_the_session(self):
+        self.choose()
+        self.finish_turn("Which of these jobs should I cancel")
+        self.assertEqual(self.order()["submit"], "Which of these jobs should I cancel")
+
+    async def test_a_prompt_never_starts_as_a_command(self):
+        self.choose()
+        self.finish_turn("/clear everything")
+        self.assertEqual(self.order()["submit"], "clear everything")
+
+    # --- replies -----------------------------------------------------------------
+
+    async def test_a_reply_is_spoken_as_it_streams(self):
+        self.choose()
+        self.event(kind="turn-start", turnId="t")
+        self.event(kind="text", turnId="t", text="Done. The tests")
+        await self.settle()
+        self.assertEqual(self.phone.said(), ["Done."])
+        self.event(kind="text", turnId="t", text=" pass.")
+        self.event(kind="turn-end", turnId="t", reason="answer")
+        await self.settle()
+        self.assertEqual(self.phone.said(), ["Done.", "The tests pass."])
+
+    async def test_other_sessions_are_not_heard(self):
+        self.choose()
+        other = self.link.sessions["8"]
+        self.conversation.mod_event(other, {"kind": "turn-start", "turnId": "x"})
+        self.conversation.mod_event(other, {"kind": "text", "turnId": "x", "text": "Secret words. More."})
+        await self.settle()
+        self.assertEqual(self.phone.said(), [])
+
+    async def test_text_from_another_turn_is_not_read(self):
+        self.choose()
+        self.event(kind="turn-start", turnId="t")
+        self.event(kind="text", turnId="other", text="Wrong turn. More.")
+        await self.settle()
+        self.assertEqual(self.phone.said(), [])
+
+    async def test_a_failed_turn_says_so(self):
+        self.choose()
+        self.event(kind="turn-start", turnId="t")
+        self.event(kind="turn-end", turnId="t", reason="error")
+        await self.settle()
+        self.assertEqual(self.phone.said(), [module.TURN_FAILED])
+
+    async def test_a_permission_prompt_during_a_spoken_turn_is_announced(self):
+        self.choose()
+        self.event(kind="turn-start", turnId="t")
+        self.event(kind="permission")
+        await self.settle()
+        self.assertEqual(self.phone.said(), [PERMISSION])
+
+    # --- the tap -----------------------------------------------------------------
+
+    async def test_a_tap_cuts_speech_and_stops_the_turn(self):
+        self.choose()
+        self.event(kind="turn-start", turnId="t")
+        self.conversation.say("A long sentence that keeps going.")
+        await self.settle(0.02)
+        gen_before = self.conversation.gen
+        self.conversation.phone_message({"t": "tap"})
+        self.assertEqual(self.conversation.gen, gen_before + 1)
+        self.assertIn({"t": "cut", "gen": gen_before + 1}, self.phone.controls)
+        self.assertEqual(self.order()["abort"], "t")
+        sent = len(self.phone.speech)
+        self.event(kind="text", turnId="t", text="Late words. After the tap.")
+        await self.settle()
+        self.assertEqual(len(self.phone.speech), sent)
+
+    async def test_a_tap_catches_up_with_the_generation_the_phone_cut_to(self):
+        self.choose()
+        ahead = self.conversation.gen + 3
+        self.conversation.phone_message({"t": "tap", "gen": ahead})
+        self.assertEqual(self.conversation.gen, ahead)
+        self.assertEqual(self.phone.controls[-1], {"t": "cut", "gen": ahead})
+        self.conversation.say("The next reply.")
+        await self.settle()
+        self.assertEqual({gen for gen, _ in self.phone.speech}, {ahead})
+
+    async def test_a_tap_sent_again_still_moves_the_generation_on(self):
+        self.choose()
+        self.conversation.phone_message({"t": "tap", "gen": self.conversation.gen + 1})
+        again = self.conversation.gen
+        self.conversation.phone_message({"t": "tap", "gen": again})
+        self.assertEqual(self.conversation.gen, again + 1)
+
+    async def test_a_tap_with_no_spoken_turn_names_no_turn(self):
+        self.choose()
+        self.conversation.phone_message({"t": "tap"})
+        self.assertIsNone(self.order()["abort"])
+
+    async def test_a_tap_after_the_turn_ended_names_no_turn(self):
+        self.choose()
+        self.event(kind="turn-start", turnId="t")
+        self.event(kind="turn-end", turnId="t", reason="answer")
+        self.conversation.phone_message({"t": "tap"})
+        self.assertIsNone(self.order()["abort"])
+
+    async def test_speech_made_before_a_tap_is_not_played_after_it(self):
+        self.choose()
+        self.conversation.say("Queued before the tap.")
+        self.conversation.phone_message({"t": "tap"})
+        await self.settle()
+        self.assertEqual(self.phone.speech, [])
+
+    # --- half duplex -------------------------------------------------------------
+
+    async def test_the_microphone_is_ignored_while_a_reply_plays(self):
+        self.choose()
+        fed = []
+        self.conversation.detector.feed = lambda samples, ignored: fed.append(ignored)
+        self.conversation.say("A sentence.")
+        await self.settle(0.05)
+        self.conversation.mic_packet(np.zeros(WINDOW, dtype=np.int16).tobytes())
+        self.assertEqual(fed, [True])
+        await self.settle(SPOKEN_SECONDS + module.LEAD_SECONDS + module.MIC_TAIL_SECONDS)
+        self.conversation.mic_packet(np.zeros(WINDOW, dtype=np.int16).tobytes())
+        self.assertEqual(fed, [True, False])
+
+    def mic(self, samples, seconds):
+        for _ in range(int(seconds * 16000 / WINDOW)):
+            self.conversation.mic_packet(samples.tobytes())
+
+    async def test_talking_over_the_end_of_a_reply_warns_and_sends_nothing(self):
+        self.choose()
+        loud = np.array(([3000] * 8 + [-3000] * 8) * (WINDOW // 16), dtype=np.int16)
+        self.mic(np.zeros(WINDOW, dtype=np.int16), 1.5)
+        self.conversation.say("A sentence.")
+        await self.settle(0.05)
+        self.mic(loud, 0.5)  # the reply is still playing
+        await self.settle(SPOKEN_SECONDS + module.LEAD_SECONDS + module.MIC_TAIL_SECONDS)
+        self.mic(loud, 1)
+        self.assertEqual(self.tones(), ["warn"])
+        self.assertFalse(self.conversation.detector.talking)
+        self.assertEqual(len(self.session.orders), 0)
+
+    # --- audio that went missing --------------------------------------------------
+
+    async def test_a_gap_in_the_mic_throws_away_the_message_in_progress(self):
+        # What the adversarial review heard: "Do not run anything yet" fell in the gap, and the rest joined up.
+        self.choose()
+        loud = np.array(([3000] * 8 + [-3000] * 8) * (WINDOW // 16), dtype=np.int16)
+        quiet = np.zeros(WINDOW, dtype=np.int16)
+        self.mic(quiet, 1.5)
+        self.mic(loud, 1)
+        self.assertTrue(self.conversation.detector.talking)
+        self.conversation.mic_gap()
+        self.assertFalse(self.conversation.detector.talking)
+        self.mic(loud, 1)  # what's left in the phone's buffer starts in the middle of a sentence
+        self.assertFalse(self.conversation.detector.talking)
+        await self.settle(SPOKEN_SECONDS + module.LEAD_SECONDS + module.MIC_TAIL_SECONDS)  # the notice plays
+        self.mic(loud, 1)  # still talking as the microphone opens again: one warning is enough
+        self.mic(quiet, 3)
+        await self.settle()
+        self.assertEqual(len(self.session.orders), 0)
+        self.assertEqual(self.tones(), ["warn"])
+        self.assertEqual(self.phone.said(), [module.LOST_PART])
+
+    async def test_a_gap_with_nobody_talking_says_nothing(self):
+        self.choose()
+        self.conversation.mic_gap()
+        self.mic(np.zeros(WINDOW, dtype=np.int16), 1)
+        await self.settle()
+        self.assertEqual(self.tones(), [])
+        self.assertEqual(self.phone.said(), [])
+
+    async def test_a_reply_waits_while_you_are_mid_sentence(self):
+        self.choose()
+        self.conversation.detector.talking = True
+        self.conversation.last_mic = self.conversation.clock()
+        self.conversation.say("A sentence.")
+        await self.settle(0.05)
+        self.conversation.last_mic = self.conversation.clock()
+        await self.settle(0.05)
+        self.assertEqual(self.phone.speech, [])
+        self.conversation.detector.talking = False
+        await self.settle()
+        self.assertEqual(self.phone.said(), ["A sentence."])
+
+    async def test_a_reply_does_not_wait_for_a_mic_that_stopped(self):
+        self.choose()
+        self.conversation.detector.talking = True
+        self.conversation.last_mic = self.conversation.clock() - module.MIC_STALE_SECONDS - 1
+        self.conversation.say("A sentence.")
+        await self.settle()
+        self.assertEqual(self.phone.said(), ["A sentence."])
+
+    async def test_a_stall_in_the_mic_keeps_the_words_so_far(self):
+        self.choose()
+        self.conversation.detector.talking = True
+        self.conversation.detector.audio = [np.zeros(WINDOW, dtype=np.int16)]
+        self.conversation.last_mic = self.conversation.clock() - module.MIC_STALE_SECONDS - 1
+        self.conversation.say("A sentence.")
+        await self.settle()
+        self.assertTrue(self.conversation.detector.talking)
+        self.assertEqual(len(self.conversation.detector.audio), 1)
+
+    async def test_a_short_stall_in_the_mic_still_holds_a_reply_back(self):
+        self.choose()
+        self.conversation.detector.talking = True
+        self.conversation.last_mic = self.conversation.clock() - 2
+        self.conversation.say("A sentence.")
+        await self.settle()
+        self.assertEqual(self.phone.speech, [])
+
+    # --- a session stopped at the keyboard ---------------------------------------
+
+    async def test_a_refused_prompt_is_explained_then_typed_on_request(self):
+        self.choose()
+        self.finish_turn("Fix the failing test.")
+        order = self.order()
+        self.event(kind="order", id=order["id"], drop="the session was stopped and nobody has sent input since")
+        await self.settle()
+        self.assertEqual(self.phone.said(), [STOPPED_AT_KEYBOARD])
+        self.finish_turn("Type it.")
+        self.assertEqual(self.order()["type"], "Fix the failing test.")
+
+    async def test_nothing_is_typed_without_a_refused_prompt_waiting(self):
+        self.choose()
+        self.finish_turn("Type it.")
+        await self.settle()
+        self.assertEqual(len(self.session.orders), 0)
+        self.assertEqual(self.phone.said(), [NOTHING_TO_TYPE])
+
+    async def test_the_offer_to_type_runs_out(self):
+        self.choose()
+        self.finish_turn("Fix it.")
+        self.event(kind="order", id=self.order()["id"], drop="stopped")
+        self.conversation.typing_offer = (self.conversation.typing_offer[0], self.conversation.clock() - 1)
+        self.finish_turn("Type it.")
+        self.assertEqual(len(self.session.orders), 0)
+
+    async def test_the_offer_to_type_works_once(self):
+        self.choose()
+        self.finish_turn("Fix it.")
+        self.event(kind="order", id=self.order()["id"], drop="stopped")
+        self.finish_turn("Type it.")
+        self.order()
+        self.finish_turn("Type it.")
+        self.assertEqual(len(self.session.orders), 0)
+
+    async def test_an_open_dialog_is_reported(self):
+        self.choose()
+        self.finish_turn("Fix it.")
+        self.event(kind="order", id=self.order()["id"], drop="stopped")
+        self.finish_turn("Type it.")
+        self.event(kind="order", id=self.order()["id"], refused="dialog")
+        await self.settle()
+        self.assertIn(DIALOG_OPEN, self.phone.said())
+
+    async def test_a_failed_submit_is_reported(self):
+        self.choose()
+        self.finish_turn("Fix it.")
+        self.event(kind="order", id=self.order()["id"], error="no")
+        await self.settle()
+        self.assertEqual(self.phone.said(), [NOT_SENT])
+
+    async def test_a_prompt_nobody_picked_up_is_reported(self):
+        original = module.ORDER_WAIT_SECONDS
+        module.ORDER_WAIT_SECONDS = 0.01
+        try:
+            self.choose()
+            self.finish_turn("Fix it.")
+            await self.settle()
+            self.assertEqual(self.phone.said(), [module.NOT_REACHED])
+        finally:
+            module.ORDER_WAIT_SECONDS = original
+
+    async def test_a_prompt_the_session_holds_but_has_not_started_is_reported(self):
+        # A dialog at the keyboard. What the adversarial review heard: a tone, then nothing for as long as it stayed open.
+        original = module.ORDER_WAIT_SECONDS
+        module.ORDER_WAIT_SECONDS = 0.05
+        try:
+            self.choose()
+            self.finish_turn("Fix it.")
+            self.event(kind="order", id=self.order()["id"], accepted=True, busy=False)
+            await self.settle()
+            self.assertEqual(self.phone.said(), [module.NOT_STARTED])
+        finally:
+            module.ORDER_WAIT_SECONDS = original
+
+    async def test_a_prompt_that_started_in_time_says_nothing(self):
+        original = module.ORDER_WAIT_SECONDS
+        module.ORDER_WAIT_SECONDS = 0.05
+        try:
+            self.choose()
+            self.finish_turn("Fix it.")
+            order_id = self.order()["id"]
+            self.event(kind="order", id=order_id, accepted=True, busy=False)
+            self.event(kind="turn-start", turnId="t1", order=order_id)
+            await self.settle()
+            self.assertEqual(self.phone.said(), [])
+        finally:
+            module.ORDER_WAIT_SECONDS = original
+
+    async def test_a_prompt_to_a_busy_session_is_reported_as_queued_and_nothing_else(self):
+        original = module.ORDER_WAIT_SECONDS
+        module.ORDER_WAIT_SECONDS = 0.05
+        try:
+            self.choose()
+            self.finish_turn("Fix it.")
+            self.event(kind="order", id=self.order()["id"], accepted=True, busy=True)
+            await self.settle()
+            self.assertEqual(self.phone.said(), [module.QUEUED])
+        finally:
+            module.ORDER_WAIT_SECONDS = original
+
+    async def test_a_prompt_to_an_idle_session_says_nothing(self):
+        self.choose()
+        self.finish_turn("Fix it.")
+        self.event(kind="order", id=self.order()["id"], accepted=True, busy=False)
+        await self.settle()
+        self.assertEqual(self.phone.said(), [])
+
+    async def test_a_prompt_spoken_while_a_reply_is_on_its_way_is_marked_unheard(self):
+        # The session is idle by then, so only the gateway knows the question hasn't been heard.
+        self.choose()
+        self.conversation.detector.talking = True
+        self.conversation.last_mic = self.conversation.clock()
+        self.conversation.say("Say yes to confirm.")
+        await self.settle(0.05)
+        self.conversation.detector.talking = False
+        self.finish_turn("Yes, go ahead.")
+        self.assertTrue(self.order()["unheard"])
+
+    async def test_a_prompt_after_a_reply_has_played_is_not_marked(self):
+        self.choose()
+        self.conversation.say("Say yes to confirm.")
+        await self.settle(SPOKEN_SECONDS + module.LEAD_SECONDS + module.MIC_TAIL_SECONDS + 0.1)
+        self.finish_turn("Yes, go ahead.")
+        self.assertNotIn("unheard", self.order())
+
+    async def test_a_queued_prompt_still_gets_its_result(self):
+        self.choose()
+        self.finish_turn("Fix it.")
+        order_id = self.order()["id"]
+        self.event(kind="order", id=order_id, accepted=True, busy=True)
+        self.event(kind="order", id=order_id, drop="stopped at the keyboard")
+        await self.settle()
+        self.assertEqual(self.phone.said(), [module.QUEUED, STOPPED_AT_KEYBOARD])
+        self.assertEqual(self.conversation.typing_offer[0], "Fix it.")
+
+    async def test_a_tap_that_dropped_queued_prompts_says_so_once(self):
+        self.choose()
+        self.finish_turn("One.")
+        first = self.order()["id"]
+        self.finish_turn("Two.")
+        second = self.order()["id"]
+        self.conversation.phone_message({"t": "tap"})
+        abort = self.order()["id"]
+        self.event(kind="order", id=first, dropped=True)
+        self.event(kind="order", id=second, dropped=True)
+        self.event(kind="order", id=abort, ok=True, dropped=True)
+        await self.settle()
+        self.assertEqual(self.phone.said(), [module.QUEUE_DROPPED])
+        self.assertEqual(self.conversation.orders, {})
+
+    async def test_a_refused_prompt_says_the_ones_behind_it_were_dropped(self):
+        # What the adversarial review heard: the same long notice twice, and no word of the prompt that was lost.
+        self.choose()
+        self.finish_turn("One.")
+        first = self.order()["id"]
+        self.event(kind="order", id=first, accepted=True, busy=True)
+        self.finish_turn("Two.")
+        second = self.order()["id"]
+        self.event(kind="order", id=second, accepted=True, busy=True)
+        self.event(kind="order", id=first, drop="stopped", later=1)
+        self.event(kind="order", id=second, dropped=True)
+        await self.settle(0.5)
+        self.assertEqual(self.phone.said(), [module.QUEUED, STOPPED_AT_KEYBOARD, module.LATER_DROPPED])
+        self.finish_turn("Type it.")
+        self.assertEqual(self.order()["type"], "One.")
+        self.assertEqual(self.conversation.prompt_metrics, {})
+
+    async def test_order_ids_differ_from_an_earlier_gateways(self):
+        other = Conversation(FakeSpeech(), lambda w: bool(w.any()), FakeDecoder, FakeEncoder())
+        self.assertNotEqual(self.conversation.order_prefix, other.order_prefix)
+        other.stop()
+
+    # --- sessions ----------------------------------------------------------------
+
+    async def test_a_chosen_session_that_ends_is_reported(self):
+        self.choose()
+        self.event(kind="bye")
+        await self.settle()
+        self.assertIsNone(self.conversation.chosen)
+        self.assertEqual(self.phone.said(), [SESSION_GONE])
+        self.assertNotIn("7", self.link.sessions)
+
+    async def test_an_unchosen_session_that_ends_leaves_the_list(self):
+        self.choose()
+        self.conversation.mod_event(self.link.sessions["8"], {"kind": "bye"})
+        self.assertNotIn("8", self.link.sessions)
+        self.assertEqual(self.phone.controls[-1]["t"], "sessions")
+        self.assertEqual([s["id"] for s in self.phone.controls[-1]["list"]], ["7"])
+        self.assertEqual(self.conversation.chosen, "7")
+
+    async def test_choosing_another_session_cuts_the_old_ones_speech(self):
+        self.choose()
+        self.conversation.frames.extend((self.conversation.gen, b"old:%d" % i, None, None) for i in range(100))
+        self.conversation.say("Old words.")
+        gen_before = self.conversation.gen
+        self.choose("8")
+        self.assertEqual(self.conversation.gen, gen_before + 1)
+        self.assertIn({"t": "cut", "gen": gen_before + 1}, self.phone.controls)
+        self.assertIn({"t": "forgot"}, self.phone.controls)
+        self.assertEqual(len(self.conversation.frames), 0)
+        self.assertEqual(len(self.conversation.say_queue), 0)
+        self.assertEqual(len(self.session.orders), 0)
+
+    async def test_choosing_another_session_drops_the_old_ones_open_orders(self):
+        original = module.ORDER_WAIT_SECONDS
+        module.ORDER_WAIT_SECONDS = 0.01
+        try:
+            self.choose()
+            self.finish_turn("Fix it.")
+            self.choose("8")
+            await self.settle()
+            self.assertEqual(self.phone.said(), [])
+        finally:
+            module.ORDER_WAIT_SECONDS = original
+
+    async def test_letting_a_session_go_takes_back_its_prompts_but_not_a_tap(self):
+        # What the adversarial review saw: after Stop, the next poll still got the prompt, and it ran.
+        self.choose()
+        self.finish_turn("Delete the old release branch.")
+        self.conversation.phone_message({"t": "tap"})
+        self.finish_turn("Delete it anyway.")
+        self.conversation.phone_message({"t": "release"})
+        self.assertEqual([("abort" in order) for order in self.session.orders], [True])
+
+    async def test_choosing_another_session_says_the_queue_was_dropped(self):
+        self.choose()
+        self.finish_turn("Fix it.")
+        self.event(kind="order", id=self.order()["id"], accepted=True, busy=True)
+        self.choose("8")
+        await self.settle()
+        self.assertEqual(self.phone.said(), [module.QUEUE_DROPPED])
+
+    async def test_choosing_another_session_with_nothing_queued_says_nothing(self):
+        self.choose()
+        self.finish_turn("Fix it.")
+        self.event(kind="order", id=self.order()["id"], accepted=True, busy=False)
+        self.choose("8")
+        await self.settle()
+        self.assertEqual(self.phone.said(), [])
+
+    async def test_choosing_the_same_session_again_keeps_its_reply(self):
+        self.choose()
+        self.event(kind="turn-start", turnId="t")
+        self.choose()
+        self.event(kind="text", turnId="t", text="Still here. More.")
+        await self.settle()
+        self.assertEqual(self.phone.said(), ["Still here."])
+
+    async def test_the_phone_stopping_releases_the_session(self):
+        self.choose()
+        self.event(kind="turn-start", turnId="t")
+        self.conversation.say("Old words.")
+        self.conversation.phone_message({"t": "release"})
+        self.assertIsNone(self.conversation.chosen)
+        self.assertFalse(self.conversation.is_chosen(self.session))
+        self.assertIsNone(self.phone.controls[-1]["chosen"])
+        self.assertEqual({s["id"] for s in self.phone.controls[-1]["list"]}, {"7", "8"})
+        self.event(kind="text", turnId="t", text="Late words. More.")
+        await self.settle()
+        self.assertEqual(self.phone.said(), [])
+
+    async def test_a_new_phone_run_starts_with_no_session_and_no_old_speech(self):
+        self.choose()
+        self.conversation.say("Old words.")
+        self.conversation.phone_new_run()
+        await self.settle()
+        self.assertIsNone(self.conversation.chosen)
+        self.assertEqual(self.phone.said(), [])
+
+    async def test_a_disconnect_keeps_the_choice(self):
+        self.choose()
+        self.conversation.phone_connected()
+        self.assertEqual(self.conversation.chosen, "7")
+        self.assertEqual(self.phone.controls[-1]["chosen"], "7")
+
+    async def test_the_phone_gets_the_session_list(self):
+        self.conversation.phone_connected()
+        message = self.phone.controls[-1]
+        self.assertEqual(message["t"], "sessions")
+        self.assertEqual({s["id"] for s in message["list"]}, {"7", "8"})
+        self.assertIsNone(message["chosen"])
+
+    # --- what's logged -----------------------------------------------------------
+
+    def timing_lines(self, logs):
+        return [json.loads(line.split("turn-timing ", 1)[1]) for line in logs.output if "turn-timing" in line]
+
+    async def test_a_later_prompt_does_not_take_a_replys_timings(self):
+        with self.assertLogs("walkie.conversation", level=logging.INFO) as logs:
+            self.choose()
+            self.finish_turn("First.")
+            first = self.order()["id"]
+            self.event(kind="turn-start", turnId="t1", order=first)
+            self.finish_turn("Second.")  # spoken before the first one's reply has any audio
+            self.event(kind="text", turnId="t1", text="The first reply. More.")
+            await self.settle()
+            self.conversation.phone_message({"t": "played", "rtt": 0})
+        line = self.timing_lines(logs)[0]
+        self.assertIn("turn_start", line)
+        self.assertIn("first_text", line)
+        self.assertIn("first_audio_played", line)
+
+    async def test_a_notice_does_not_count_as_a_replys_first_audio(self):
+        with self.assertLogs("walkie.conversation", level=logging.INFO) as logs:
+            self.choose()
+            self.finish_turn("A message.")
+            order = self.order()["id"]
+            self.event(kind="order", id=order, accepted=True, busy=True)
+            await self.settle()
+            self.conversation.phone_message({"t": "played", "rtt": 0})  # that sound was the notice
+            self.assertEqual(self.timing_lines(logs), [])
+            self.event(kind="turn-start", turnId="t", order=order)
+            self.event(kind="text", turnId="t", text="The reply. More.")
+            await self.settle()
+            self.conversation.phone_message({"t": "played", "rtt": 0})
+        line = self.timing_lines(logs)[0]
+        self.assertEqual(line["queued"], 1)
+        self.assertIn("first_audio_played", line)
+
+    async def test_a_refused_prompt_still_gets_a_line_in_the_log(self):
+        with self.assertLogs("walkie.conversation", level=logging.INFO) as logs:
+            self.choose()
+            self.finish_turn("A message.")
+            self.event(kind="order", id=self.order()["id"], drop="stopped")
+            await self.settle()
+        self.assertEqual(self.timing_lines(logs)[0]["refused"], 1)
+        self.assertTrue(any("notice stopped-at-keyboard" in line for line in logs.output))
+
+    async def test_a_dropped_prompt_still_gets_a_line_in_the_log(self):
+        with self.assertLogs("walkie.conversation", level=logging.INFO) as logs:
+            self.choose()
+            self.finish_turn("A message.")
+            self.event(kind="order", id=self.order()["id"], dropped=True)
+        self.assertEqual(self.timing_lines(logs)[0]["dropped"], 1)
+
+    async def test_prompts_still_waiting_get_a_line_when_the_session_is_let_go(self):
+        with self.assertLogs("walkie.conversation", level=logging.INFO) as logs:
+            self.choose()
+            self.finish_turn("A message.")
+            self.conversation.phone_message({"t": "release"})
+        self.assertEqual(len(self.timing_lines(logs)), 1)
+
+    async def test_a_tap_before_the_first_audio_keeps_the_replys_line(self):
+        with self.assertLogs("walkie.conversation", level=logging.INFO) as logs:
+            self.choose()
+            self.finish_turn("A message.")
+            self.event(kind="turn-start", turnId="t", order=self.order()["id"])
+            self.conversation.phone_message({"t": "tap", "gen": 0})
+            self.event(kind="turn-end", turnId="t", reason="answer")
+            self.finish_turn("The next message.")
+            self.event(kind="turn-start", turnId="t2", order=self.order_after_abort()["id"])
+        lines = self.timing_lines(logs)
+        self.assertEqual(len(lines), 1)
+        self.assertIn("turn_start", lines[0])
+
+    def order_after_abort(self):
+        self.assertIn("abort", self.order())
+        return self.order()
+
+    async def test_a_prompt_a_tap_stopped_gets_one_line_in_the_log(self):
+        with self.assertLogs("walkie.conversation", level=logging.INFO) as logs:
+            self.choose()
+            self.finish_turn("A message.")
+            order = self.order()["id"]
+            self.conversation.phone_message({"t": "tap", "gen": 0})
+            self.event(kind="order", id=order, ok=True)  # it stops as it starts, so no turn-start follows
+        lines = self.timing_lines(logs)
+        self.assertEqual(len(lines), 1)
+        self.assertEqual(lines[0]["dropped"], 1)
+
+    async def test_a_prompt_dropped_by_a_tap_gets_only_one_line_in_the_log(self):
+        with self.assertLogs("walkie.conversation", level=logging.INFO) as logs:
+            self.choose()
+            self.finish_turn("A message.")
+            order = self.order()["id"]
+            self.conversation.phone_message({"t": "tap", "gen": 0})
+            self.event(kind="order", id=order, dropped=True)
+        self.assertEqual(len(self.timing_lines(logs)), 1)
+
+    async def test_a_reply_cut_short_by_releasing_the_session_keeps_its_line(self):
+        with self.assertLogs("walkie.conversation", level=logging.INFO) as logs:
+            self.choose()
+            self.finish_turn("A message.")
+            self.event(kind="turn-start", turnId="t", order=self.order()["id"])
+            self.conversation.phone_message({"t": "release"})
+        self.assertIn("turn_start", self.timing_lines(logs)[0])
+
+    async def test_a_reply_whose_session_ended_keeps_its_line(self):
+        with self.assertLogs("walkie.conversation", level=logging.INFO) as logs:
+            self.choose()
+            self.finish_turn("A message.")
+            self.event(kind="turn-start", turnId="t", order=self.order()["id"])
+            self.event(kind="bye")
+        self.assertIn("turn_start", self.timing_lines(logs)[0])
+
+    async def test_a_reply_whose_turn_end_never_came_keeps_its_line(self):
+        with self.assertLogs("walkie.conversation", level=logging.INFO) as logs:
+            self.choose()
+            self.finish_turn("A message.")
+            self.event(kind="turn-start", turnId="t", order=self.order()["id"])
+            self.event(kind="turn-start", turnId="t2")  # after a /clear, say, which ends no turn
+        self.assertIn("turn_start", self.timing_lines(logs)[0])
+
+    async def test_notices_are_logged_by_name_without_their_words(self):
+        with self.assertLogs("walkie.conversation", level=logging.INFO) as logs:
+            self.finish_turn("A message.")
+        self.assertTrue(any("notice no-session" in line for line in logs.output))
+        self.assertFalse(any(NO_SESSION in line for line in logs.output))
+
+    async def test_no_words_reach_the_log(self):
+        with self.assertLogs(level=logging.INFO) as logs:
+            logging.getLogger("walkie.test").info("start")
+            self.choose()
+            self.finish_turn("Private words from the owner.")
+            order = self.order()
+            self.event(kind="order", id=order["id"], ok=True)
+            self.event(kind="turn-start", turnId="t", order=order["id"])
+            self.event(kind="text", turnId="t", text="Private reply text.")
+            self.event(kind="turn-end", turnId="t", reason="answer")
+            await self.settle()
+            self.conversation.phone_message({"t": "played", "rtt": 10})
+        output = "\n".join(logs.output)
+        self.assertIn("turn-timing", output)
+        self.assertNotIn("Private", output)
+
+
+if __name__ == "__main__":
+    unittest.main()

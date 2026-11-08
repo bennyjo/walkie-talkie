@@ -1,0 +1,9 @@
+{
+  "name": "walk-voice",
+  "version": "0.1.0",
+  "description": "Connects a live Claude Code session to the walkie-talkie gateway on this Mac",
+  "author": {
+    "name": "Benny Johansson"
+  },
+  "license": "Apache-2.0"
+}

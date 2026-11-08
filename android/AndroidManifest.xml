@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="dev.walkietalkie" android:versionCode="1" android:versionName="0.1.0">
+  <!-- Target 36: an app targeting 37 needs a local network permission, and Google's page
+       doesn't say whether Tailscale's addresses count. -->
+  <uses-sdk android:minSdkVersion="33" android:targetSdkVersion="36"/>
+  <uses-permission android:name="android.permission.INTERNET"/>
+  <uses-permission android:name="android.permission.RECORD_AUDIO"/>
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE"/>
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"/>
+  <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+  <uses-permission android:name="android.permission.WAKE_LOCK"/>
+  <uses-permission android:name="android.permission.USE_BIOMETRIC"/>
+  <application
+      android:label="Walkie Talkie"
+      android:icon="@mipmap/ic_launcher"
+      android:theme="@style/AppTheme"
+      android:allowBackup="false"
+      android:dataExtractionRules="@xml/no_backup">
+    <activity android:name=".MainActivity" android:exported="true" android:launchMode="singleTask"
+        android:windowSoftInputMode="adjustResize">
+      <intent-filter>
+        <action android:name="android.intent.action.MAIN"/>
+        <category android:name="android.intent.category.LAUNCHER"/>
+      </intent-filter>
+    </activity>
+    <service android:name=".TalkService" android:exported="false"
+        android:foregroundServiceType="microphone|mediaPlayback"/>
+  </application>
+</manifest>
