@@ -92,7 +92,6 @@ Pick a voice under **Voice** in the app, once you've tapped **Start**. All 11 co
 | Symptom | Likely cause and fix |
 | --- | --- |
 | `Can't listen on 100.x.y.z` | Tailscale is stopped on the Mac. Connect it |
-| `Warning: a VPN that blocks Tailscale is connected` | Turn off the VPN |
 | `Missing ... Run gateway/fetch-models.sh` | The speech models aren't downloaded yet |
 | The app says "Connecting to the Mac" | Check Tailscale on both ends, and that the gateway is running |
 | The app says "Can't reach your Mac" | Turn off any VPN that blocks Tailscale, check Tailscale on both ends, and check the Mac is awake |
