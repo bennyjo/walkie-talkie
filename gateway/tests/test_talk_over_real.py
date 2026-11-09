@@ -33,6 +33,9 @@ OWNER = "Could you check whether the tests pass on the main branch please?"
 OVER = "Wait, stop, use the staging database instead."
 PASSER_BY = "Excuse me, do you know where the train station is?"
 READ_BACK = "I'll merge the release branch. Confirm?"
+# The worst case for the pause rule: a reply that says the very words, some of them alone.
+WORDY_REPLY = ("Let me pause the build first. Pause. You can go now. Go. Press play to hear it. Play. "
+               "Then we start again from the top. Start. I will pause here, and then go on, and start the tests.")
 
 
 def level_of(samples):
@@ -43,6 +46,41 @@ def level_of(samples):
 
 def noise(count, dbfs):
     return np.random.default_rng(1).normal(size=count) * 32768 * 10 ** (dbfs / 20)
+
+
+def resampled(spoken):
+    spoken = spoken.astype(np.float64)
+    return np.interp(np.arange(0, len(spoken), VOICE_RATE / RATE), np.arange(len(spoken)), spoken)
+
+
+def opus_encoder():
+    encoder = av.CodecContext.create("libopus", "w")
+    encoder.rate, encoder.layout, encoder.format, encoder.bit_rate = RATE, "mono", "s16", 24000
+    encoder.options = {"application": "voip", "frame_duration": "20"}
+    encoder.open()
+    return encoder
+
+
+class Stub:
+    """The phone and the mod link, for a test that drives the microphone itself."""
+
+    connected = True
+
+    def __init__(self):
+        self.controls = []
+        self.sessions = {"7": Session("7")}
+
+    def send_control(self, message):
+        self.controls.append(message)
+
+    def forget_speech(self):
+        pass
+
+    def send_speech(self, gen, packet):
+        pass
+
+    def prune(self):
+        return False
 
 
 class Rig:
@@ -69,10 +107,7 @@ class Rig:
         spoken = speech.synthesize(REPLY[:120], "af_bella").astype(np.float64)
         heard = np.interp(np.arange(0, len(spoken), VOICE_RATE / RATE), np.arange(len(spoken)), spoken)
         self.leak_gain = 10 ** ((leak_db - level_of(heard)) / 20)
-        self.encoder = av.CodecContext.create("libopus", "w")
-        self.encoder.rate, self.encoder.layout, self.encoder.format, self.encoder.bit_rate = RATE, "mono", "s16", 24000
-        self.encoder.options = {"application": "voip", "frame_duration": "20"}
-        self.encoder.open()
+        self.encoder = opus_encoder()
         self.session = Session("7")
         self.sessions = {"7": self.session}
         self.conversation = Conversation(speech, VoiceDetector(MODELS), OpusDecoder, OpusEncoder())
@@ -148,6 +183,8 @@ class Rig:
         todo = sorted(timeline, key=lambda item: item[0])
         started = time.monotonic()
         for i in range(frames):
+            if self.finished:
+                break  # a script has seen all it needs
             while todo and todo[0][0] <= i * 0.02:
                 todo.pop(0)[1]()
             self.line.append(self.queue.popleft() if self.queue and not self.held else np.zeros(FRAME))
@@ -288,6 +325,106 @@ class TalkOverRealTest(unittest.TestCase):
             await asyncio.sleep(0)
             await asyncio.sleep(0)
         return turns[0] if turns else ""
+
+    # --- pausing -------------------------------------------------------------------
+
+    def test_pausing_keeps_a_conversation_out_of_the_session_until_go(self):
+        # Each voice waits for the last one's turn and any spoken confirmation to end, because speech that
+        # starts under a notice doesn't count. Times count from the events: transcription runs late when the machine is busy.
+        voices = [self.voice(OWNER, -31), self.voice("Pause.", -31, "bm_george"),
+                  self.voice(PASSER_BY, -31, "bm_lewis"), self.voice("Go.", -31, "bm_george"), self.voice(OVER, -31)]
+
+        async def script(rig):
+            turns = []
+            on_turn = rig.conversation.detector.on_turn
+            rig.conversation.detector.on_turn = lambda text, *rest: (turns.append(text), on_turn(text, *rest))
+            await asyncio.sleep(1)
+            for count, samples in enumerate(voices, 1):
+                rig.speak(samples)
+                await self.until(rig, lambda: len(turns) >= count)
+                await self.until(rig, lambda: not rig.conversation._reply_pending())
+            rig.finished = True
+
+        async def scenario():
+            rig = Rig(self.speech, -60, 0.3)
+            await asyncio.gather(rig.run(120), script(rig))
+            return rig
+        rig = asyncio.run(scenario())
+        self.assertEqual(len(rig.prompts), 2, rig.prompts)
+        self.assertTrue(rig.prompts[0].lower().startswith("could"), rig.prompts)
+        self.assertTrue(rig.prompts[1].lower().startswith("wait"), rig.prompts)
+        self.assertEqual(rig.aborts, [])
+        self.assertFalse(rig.conversation.paused)
+
+    async def heard_under_hold(self, stream, trip, paused=False):
+        """What the mic hears, through Opus and the real detector, on a clock that keeps to the audio."""
+        now = [100.0]
+        stub = Stub()
+        conversation = Conversation(self.speech, VoiceDetector(MODELS), OpusDecoder, None, clock=lambda: now[0])
+        conversation.phone, conversation.modlink = stub, stub
+        conversation.chosen, conversation.owner_level, conversation.paused = "7", -31, paused
+        conversation.reply_heard = True
+        conversation.played_until = now[0] + len(stream) / RATE + 60
+        encoder = opus_encoder()
+        held = False
+        for start in range(0, len(stream) - FRAME, FRAME):
+            if not held and start >= trip:
+                held = True
+                conversation.phone_message({"t": "hold", "id": 1})
+            piece = av.AudioFrame.from_ndarray(stream[start:start + FRAME].reshape(1, -1), format="s16", layout="mono")
+            piece.rate, piece.pts = RATE, start
+            for packet in encoder.encode(piece):
+                conversation.mic_packet(bytes(packet))
+            now[0] += FRAME / RATE
+            await asyncio.sleep(0)
+            while conversation.hold and conversation.hold.checking:
+                await asyncio.sleep(0.002)
+            if held and conversation.hold is None:
+                break
+        conversation.stop()
+        return conversation, stub
+
+    def over_a_reply(self, reply, word, onset, leak_db, tail=TAIL):
+        """The stream under a hold: the reply's leak until the phone trips and its tail runs out, with a word on top."""
+        leak = reply * 10 ** ((leak_db - level_of(reply)) / 20)
+        trip = onset + RATE // 16
+        first = max(0, onset - 4 * RATE)
+        heard = np.zeros(trip - first + int(tail * RATE) + len(word) + 4 * RATE)
+        heard[:trip - first + int(tail * RATE)] = leak[first:trip + int(tail * RATE)]
+        heard[onset - first:onset - first + len(word)] += word
+        stream = np.clip(heard + noise(len(heard), -60), -32768, 32767).astype(np.int16)
+        return stream, trip - first
+
+    def heard_reply(self, text):
+        return resampled(self.speech.synthesize(text, "af_bella"))
+
+    def test_a_lone_pause_over_a_reply_pauses_or_misses_and_stops_nothing_either_way(self):
+        # The transcriber misses a word this short at many moments, and which ones shifts with its threads, so
+        # no single moment can be promised. This voice is one it reads well, so it catches some of these.
+        reply = self.heard_reply(REPLY)
+        word = self.voice("Pause.", -31, "bm_george")
+        caught = 0
+        for onset in (1, 3, 5, 7, 9):
+            with self.subTest(onset=onset):
+                stream, trip = self.over_a_reply(reply, word, onset * RATE, -41)
+                conversation, stub = asyncio.run(self.heard_under_hold(stream, trip))
+                caught += conversation.paused
+                self.assertEqual(len(stub.sessions["7"].orders), 0)
+                self.assertEqual([c["leak"] for c in stub.controls if c["t"] == "resume"], [False])
+                self.assertEqual([c for c in stub.controls if c["t"] == "cut"], [])
+        self.assertGreater(caught, 0)
+
+    def test_a_replys_own_echo_never_changes_whether_it_is_listening(self):
+        # A reply full of the very words, tripping the phone everywhere, with leak quieter than the owner.
+        reply = self.heard_reply(WORDY_REPLY)
+        for paused in (False, True):
+            for onset in np.arange(0.5, len(reply) / RATE - 1, 0.5):
+                with self.subTest(paused=paused, onset=float(onset)):
+                    stream, trip = self.over_a_reply(reply, np.zeros(0), int(onset * RATE), -41)
+                    conversation, stub = asyncio.run(self.heard_under_hold(stream, trip, paused))
+                    self.assertEqual(conversation.paused, paused)
+                    self.assertEqual(len(stub.sessions["7"].orders), 0)
+                    self.assertEqual([c for c in stub.controls if c["t"] in ("cut", "leak")], [])
 
 
 if __name__ == "__main__":

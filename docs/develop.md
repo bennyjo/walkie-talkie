@@ -37,7 +37,7 @@ The build needs no Gradle. It downloads a JDK and Android's build tools into `an
 | --- | --- |
 | `gateway/walkie_gateway/phone.py` | The phone's protocol, described at the top of the file, and login |
 | `gateway/walkie_gateway/modlink.py` | The mod's long poll and events |
-| `gateway/walkie_gateway/conversation.py` | Routing, the tap, talking over a reply, the voice, spoken notices, relayed replies, the spoken yes, and when a call ends |
+| `gateway/walkie_gateway/conversation.py` | Routing, the tap, talking over a reply, pausing, the voice, spoken notices, relayed replies, the spoken yes, and when a call ends |
 | `gateway/walkie_gateway/turns.py` | Speech detection and end-of-speech detection |
 | `gateway/walkie_gateway/text.py` | What of a reply gets read aloud |
 | `gateway/walkie_gateway/speech.py` | Silero, Parakeet, Kokoro, and Opus |
