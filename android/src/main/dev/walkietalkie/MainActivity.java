@@ -526,10 +526,29 @@ public class MainActivity extends Activity {
         return session.optString("name") + "  " + session.optString("session");
     }
 
-    /** The name, and under it in smaller, quieter text, when the session last took a prompt. */
+    /**
+     * The name, and under it in smaller, quieter text, where the folder is, then the login and when the
+     * session last took a prompt. So two folders of one name, or one folder on two logins, differ.
+     */
     private CharSequence rowText(JSONObject session) {
-        String ago = ago(session);
-        return ago.isEmpty() ? rowName(session) : withQuietLine(rowName(session), ago);
+        String when = join(" \u00b7 ", login(session), ago(session));
+        String quiet = join("\n", session.optString("where"), when);
+        return quiet.isEmpty() ? rowName(session) : withQuietLine(rowName(session), quiet);
+    }
+
+    private static String join(String between, String... parts) {
+        StringBuilder text = new StringBuilder();
+        for (String part : parts) {
+            if (part.isEmpty()) continue;
+            if (text.length() > 0) text.append(between);
+            text.append(part);
+        }
+        return text.toString();
+    }
+
+    private static String login(JSONObject session) {
+        String login = session.optString("login");
+        return login.isEmpty() ? "" : login + " login";
     }
 
     private CharSequence withQuietLine(String first, String second) {

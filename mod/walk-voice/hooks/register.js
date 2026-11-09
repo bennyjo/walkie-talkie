@@ -62,6 +62,7 @@ export const SPOKEN_EARLY = `This message was spoken before your last reply fini
 let socket = null // the gateway's socket, null while this session stays inert
 let stateDir = null // the gateway's folder, which holds its socket and the phone's public key
 let deny = [] // folder names whose sessions never connect
+let loginName = '' // a short name for this session's login, which the phone shows beside its folder
 let instance = null // this process, stable across /clear and reloads
 let chosen = false // the phone chose this session, and this mod checked the fingerprint that did
 let heardChosen = false // what the gateway last said, which is no grant on its own
@@ -272,6 +273,7 @@ async function pollOnce($) {
       chosen: heardChosen,
       nonce,
       promptedAt,
+      login: loginName,
       role: isDesk ? 'front-desk' : undefined,
     })
     if (!response.ok) throw new Error(`status ${response.status}`)
@@ -471,7 +473,16 @@ async function allowedHere($) {
   const here = login && Object.hasOwn(logins, login) ? logins[login] : null
   if (!here || !Array.isArray(here.deny)) return false
   deny = [...config.deny, ...here.deny].filter((name) => typeof name === 'string' && name).map((name) => name.toLowerCase())
+  loginName = await nameOfLogin($, home, login)
   return true
+}
+
+// The login's folder, short: "default" for ~/.claude, and "personal" for ~/.claude-personal. Like a
+// folder, a login whose path holds a denied name goes unnamed.
+async function nameOfLogin($, home, login) {
+  if (login.toLowerCase().split('/').some((part) => deny.includes(part))) return ''
+  if (login === (await realPath($, `${home}/.claude`))) return 'default'
+  return login.split('/').pop().replace(/^\./, '').replace(/^claude-/, '')
 }
 
 export function register(on) {

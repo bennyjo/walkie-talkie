@@ -223,8 +223,34 @@ class ModLinkTest(unittest.IsolatedAsyncioTestCase):
     async def test_the_phone_is_told_only_a_short_description(self):
         modlink.POLL_HOLD = 0.01
         await post(self.path, "/next", {**SESSION, "nonce": "challenge", "promptedAt": 1000})
-        self.assertEqual(self.link.sessions["123"].describe(61000),
-                         {"id": "123", "name": "project", "session": "abc", "nonce": "challenge", "ago": 60})
+        self.assertEqual(self.link.sessions["123"].describe(61000, home="/home/me"),
+                         {"id": "123", "name": "project", "where": "/work", "login": "", "session": "abc",
+                          "nonce": "challenge", "ago": 60})
+
+    async def test_two_folders_of_one_name_differ_by_where_and_login(self):
+        modlink.POLL_HOLD = 0.01
+        await post(self.path, "/next", {**SESSION, "cwd": "/home/me/Code/firstmate", "login": "default"})
+        await post(self.path, "/next", {**SESSION, "instance": "456", "cwd": "/home/me/.copies/1/firstmate",
+                                        "login": "personal"})
+        one, two = (self.link.sessions[key].describe(0, home="/home/me") for key in ("123", "456"))
+        self.assertEqual((one["name"], one["where"], one["login"]), ("firstmate", "~/Code", "default"))
+        self.assertEqual((two["name"], two["where"], two["login"]), ("firstmate", "~/.copies/1", "personal"))
+
+    async def test_where_names_home_only_as_a_whole_folder(self):
+        session = modlink.Session("1")
+        for cwd, where in (("/home/me/project", "~"), ("/home/meg/project", "/home/meg"), ("/project", "/"), ("/", "")):
+            session.cwd = cwd
+            self.assertEqual(session.describe(0, home="/home/me")["where"], where)
+
+    async def test_a_new_login_name_updates_the_phones_list_and_stays_short(self):
+        modlink.POLL_HOLD = 0.01
+        await post(self.path, "/next", {**SESSION, "login": "default"})
+        before = self.conversation.changes
+        await post(self.path, "/next", {**SESSION, "login": "x" * 100})
+        self.assertGreater(self.conversation.changes, before)
+        self.assertEqual(self.link.sessions["123"].login, "x" * modlink.MAX_LOGIN)
+        await post(self.path, "/event", {**SESSION, "events": []})
+        self.assertEqual(self.link.sessions["123"].login, "x" * modlink.MAX_LOGIN)
 
     async def test_a_new_challenge_or_prompt_updates_the_phones_list(self):
         modlink.POLL_HOLD = 0.01

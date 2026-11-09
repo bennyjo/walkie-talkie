@@ -143,7 +143,7 @@ test('an orchestrated worker never connects', async ($, on) => {
 test('a session polls with its live session ID', async ($, on) => {
   const { clock, seen } = world(on)
   await begin($, clock)
-  expect(seen.polls[0]).toEqual({ instance: '4242', session: 'session-1', cwd: '/work/project', chosen: false, nonce: expect.any(String), promptedAt: 0 })
+  expect(seen.polls[0]).toEqual({ instance: '4242', session: 'session-1', cwd: '/work/project', chosen: false, nonce: expect.any(String), promptedAt: 0, login: 'personal' })
 })
 
 test('a poll says what the mod last heard about being chosen, so the gateway can correct it at once', async ($, on) => {
@@ -1369,6 +1369,20 @@ test('a login the owner did not name never connects', async ($, on) => {
 test('the default login connects only when named', async ($, on) => {
   const named = await quiet($, on, { env: { CLAUDE_CONFIG_DIR: '' } })
   expect(named.polls.length).toBe(1)
+})
+
+const OTHER_LOGIN = '/home/me/logins/work'
+for (const [dir, login] of [['', 'default'], [WORK, 'default'], [PERSONAL, 'personal'], [OTHER_LOGIN, 'work']]) {
+  test(`a poll names the login at ${dir || 'the default folder'} as ${login}, so one folder on two logins differs`, async ($, on) => {
+    const config = { logins: { [WORK]: { deny: [] }, [PERSONAL]: { deny: [] }, [OTHER_LOGIN]: { deny: [] } }, deny: [] }
+    const seen = await quiet($, on, { env: { CLAUDE_CONFIG_DIR: dir }, config })
+    expect(seen.polls[0].login).toBe(login)
+  })
+}
+
+test('a login whose path holds a denied name goes unnamed', async ($, on) => {
+  const seen = await quiet($, on, { config: { logins: { [WORK]: { deny: [] }, [PERSONAL]: { deny: ['.claude-personal'] } }, deny: [] } })
+  expect(seen.polls[0].login).toBe('')
 })
 
 test('the default login stays out when only the other one is named', async ($, on) => {
