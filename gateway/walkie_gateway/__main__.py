@@ -24,18 +24,6 @@ MOD_FILES = (".claude-plugin/plugin.json", "hooks/hooks.json")  # and every hook
 UNREADABLE = "Can't read %s: %s. Nothing was changed. Fix the file, or move it away to start over."
 
 
-def warn_if_vpn_blocks_tailscale():
-    """Some VPNs block Tailscale to the phone. Only Mullvad is detected, and only its status is read."""
-    if not shutil.which("mullvad"):
-        return
-    try:
-        out = subprocess.run(["mullvad", "status"], capture_output=True, text=True, timeout=5).stdout
-    except (OSError, subprocess.TimeoutExpired):
-        return
-    if out.split()[:1] in (["Connected"], ["Connecting"]):
-        print("Warning: a VPN that blocks Tailscale is connected. Turn it off.", flush=True)
-
-
 def keep_mac_awake():
     """The Mac stays awake while this process lives. caffeinate exits by itself when it ends."""
     if shutil.which("caffeinate"):
@@ -47,7 +35,6 @@ def keep_mac_awake():
 async def serve(args):
     state_dir = security.private_dir(args.state)
     host = security.check_bind(args.bind) if args.bind else security.tailscale_address()
-    warn_if_vpn_blocks_tailscale()
 
     print("Loading the speech models. This takes a few seconds.", flush=True)
     loop = asyncio.get_running_loop()
