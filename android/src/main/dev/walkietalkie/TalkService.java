@@ -281,7 +281,7 @@ public class TalkService extends Service implements GatewayLink.Listener, Speake
 
         String text;
         if (!micOk) {
-            text = "Plug in the mic's USB receiver. The mic is off until then.";
+            text = "Connect your USB mic. The mic is off until then.";
         } else if (silenced) {
             text = "Android has silenced the mic. Another app may have taken it.";
         } else if (!soundOk) {
