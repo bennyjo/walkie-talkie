@@ -41,7 +41,8 @@ async def serve(args):
     speech = await loop.run_in_executor(None, Speech, args.models, args.threads)
 
     conversation = Conversation(speech, VoiceDetector(args.models), OpusDecoder, OpusEncoder(),
-                                voice_file=os.path.join(state_dir, "voice"), pause_file=os.path.join(state_dir, "paused"))
+                                voice_file=os.path.join(state_dir, "voice"), pause_file=os.path.join(state_dir, "paused"),
+                                heard=not args.no_heard)
     store = security.PhoneStore(state_dir)
     pairing = security.PairingWindow() if args.pair else None
     phone = PhoneServer(store, conversation, pairing)
@@ -284,6 +285,8 @@ def main(argv=None):
     run.add_argument("--state", default=security.default_state_dir(), help="private folder for the phone's token and the mod's socket")
     run.add_argument("--models", default=default_models_dir(), help="folder that holds the speech models")
     run.add_argument("--threads", type=int, default=4, help="threads for each speech model")
+    run.add_argument("--no-heard", action="store_true", help="don't say a thinking word when a message reaches the "
+                                                          "session, or play the warning tone when it can't")
     lost = commands.add_parser("revoke", help="stop trusting the paired phone, at once: for a lost or stolen phone")
     lost.add_argument("--state", default=security.default_state_dir(), help="the gateway's private folder")
     setup = commands.add_parser("install", help="install the mod into the logins you name, and say which may connect")

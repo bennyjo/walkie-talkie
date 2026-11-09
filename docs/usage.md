@@ -13,7 +13,7 @@ Every Start takes a fingerprint, and the fingerprint lets the phone talk to that
 
 | You | What happens |
 | --- | --- |
-| Stop talking | After two seconds of silence, your words go to the session, with no tone. The reply follows. See [How a message ends](#how-a-message-ends) |
+| Stop talking | After two seconds of silence, your words go to the session. As soon as the session has them, you hear one thinking word, such as "Working." or "Pondering.", so you know they arrived. The reply follows. If they can't reach the session, you hear the warning tone and why instead. See [How a message ends](#how-a-message-ends) and [Turn off the thinking word](#turn-off-the-thinking-word) |
 | Pause while you think | Nothing. A pause doesn't end a message, so one thought arrives as one prompt |
 | Talk while the session is busy | You hear "It's in the queue." Your message runs once, in the order you said it, after the current turn. It can't confirm anything in a reply you hadn't heard yet, and the session is told so. That includes a turn that's working in silence, or whose reply hasn't started. Tap first to stop it |
 | Talk while a reply plays | The reply goes quiet at once, on the phone. If you keep talking for about a second, as loud as your last message, it's cut, a running spoken turn stops as a tap stops it, messages still in the queue are dropped, and your words are the next message. The session is told you didn't hear all of that reply. Once a reply has played out, with nothing more on its way, what you say straight after it is an ordinary message, even a single word. Talking over a reply also applies in its first moments, so talking just as it starts may stop its turn before you hear any of it. A short word like "no", a lone "cancel" or "type it", a cough, a knock, or a quieter voice nearby doesn't count, and the reply carries on after about a second, so say a little more, or tap. Until you've spoken once since the gateway started, talking over a reply only pauses it, and the app can take a short word for earbud leak, which makes your voice harder to hear over later replies. If your voice is too soft for the phone to hear over the reply, it plays on, and if you're still talking when it ends, you hear the warning tone, and those words don't count, because their start is gone |
@@ -21,6 +21,7 @@ Every Start takes a fingerprint, and the fingerprint lets the phone talk to that
 | Say only "cancel" or "never mind, cancel" | The same as a tap, and you hear "Cancelled." At a [front desk](front-desk.md), you hear "Stopped what was waiting. Anything already filed still stands," because a note already filed stays with the primary. Over a reply or a notice, a lone "cancel" is too short to count, so tap, say "never mind, cancel", or wait for the sound to end. A prompt that merely ends with the word still goes |
 | Say only "pause", then nothing else | Listening stops after the usual two seconds of silence, and you hear "Paused." The word never reaches the session. Until you resume, nothing anyone says reaches the session: no prompts, no yes or no to a read-back, "cancel" and "type it" do nothing, and talking over a reply stops nothing and gives the app no lesson about earbud leak. A running turn keeps going, and you hear its reply. A reply waits while someone's talking, and it can be silenced while they do. A tap still stops the reply and the turn, and it doesn't resume. See [Pause listening](#pause-listening) |
 | Say only "go", "play", or "start" while paused | Listening starts again, and you hear "Listening." The word never reaches the session. Unless you're paused, these are ordinary words |
+| Hear the warning tone, then why a message didn't reach the session | It couldn't send it, the session didn't pick it up in 10 seconds, or the session was stopped at the keyboard. The words after the tone say which |
 | Hear the warning tone with no words | The connection to the Mac dropped, the mic stopped coming from the receiver, you talked too softly over the end of a reply, or the call ended. The app says which |
 | Hear "I lost part of that" | The connection was down for more than the 10 seconds the phone keeps, or the mic stopped coming from the receiver mid-message, so that message was thrown away rather than sent with a hole in it. Say it again |
 | Hear "something on screen" | The reply had code, a path, or something similar there, which isn't read out. Look, or ask what it is. Don't confirm something you haven't heard |
@@ -47,6 +48,16 @@ A read-back waiting for a yes ends when you pause, as it does for any other mess
 - **30 minutes paused:** speech heard while paused doesn't count as something said, so the call ends as it does after 30 minutes of silence.
 
 The app's screen doesn't show the pause: go by what you hear. No app update is needed.
+
+## Turn off the thinking word
+
+The thinking word, and the warning tone when a message can't reach the session, are on by default. To turn both off, start the gateway with `--no-heard`:
+
+```sh
+uv run --project gateway walkie-gateway serve --no-heard
+```
+
+You still hear "It's in the queue." for a busy session, and why a message didn't reach the session. No app update is needed.
 
 ## End a call
 
@@ -79,7 +90,7 @@ This costs time. Your words reach the session about 1.4 seconds later after a fl
 
 ## Timings
 
-After each spoken message, the gateway logs one `turn-timing` line, in milliseconds after your last voiced audio, so marks before that are negative. Every message gets its own line, with `queued`, `refused`, or `dropped` set if that happened. `longest_pause` is the longest pause you carried on from. `speech_detected` is when the gateway decided you were talking, and `transcribe_start` is when the final transcription began. `submitted` should be about 2,000, or 3,000 if you paused. For a session that answers straight away, `first_audio_played` should be about 4,000 to 5,000, or a second more if you paused. `last_voice_at` is that moment on the Mac's monotonic clock, in seconds. The gateway also logs each spoken notice by name, such as `notice queued` or `notice paused`, and never its words.
+After each spoken message, the gateway logs one `turn-timing` line, in milliseconds after your last voiced audio, so marks before that are negative. Every message gets its own line, with `queued`, `refused`, or `dropped` set if that happened. `longest_pause` is the longest pause you carried on from. `speech_detected` is when the gateway decided you were talking, and `transcribe_start` is when the final transcription began. `submitted` should be about 2,000, or 3,000 if you paused. For a session that answers straight away, `first_audio_played` should be about 4,000 to 5,000, or a second more if you paused. `last_voice_at` is that moment on the Mac's monotonic clock, in seconds. The gateway also logs each spoken notice by name, such as `notice queued`, `notice heard`, or `notice paused`, and never its words.
 
 The app's screen shows the routes, which mic channels carry sound, the round trip to the Mac, and underruns. It also shows the mic's loudest level over the last second, its background, and how loud the earbuds leak, all in dB under full scale in the speech band, and how many times you talked over a reply and how many of those resumed.
 

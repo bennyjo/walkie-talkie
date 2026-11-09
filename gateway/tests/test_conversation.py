@@ -2223,11 +2223,13 @@ class ConversationTest(unittest.IsolatedAsyncioTestCase):
             self.finish_turn("Fix it.")
             self.event(kind="order", id=self.order()["id"], accepted=True, busy=False)
             await self.settle()
-            self.assertEqual(self.phone.said(), [module.NOT_STARTED])
+            said = self.phone.said()
+            self.assertIn(said[0], module.HEARD_WORDS)
+            self.assertEqual(said[1:], [module.NOT_STARTED])
         finally:
             module.ORDER_WAIT_SECONDS = original
 
-    async def test_a_prompt_that_started_in_time_says_nothing(self):
+    async def test_a_prompt_that_started_in_time_says_only_its_thinking_word(self):
         original = module.ORDER_WAIT_SECONDS
         module.ORDER_WAIT_SECONDS = 0.05
         try:
@@ -2237,7 +2239,9 @@ class ConversationTest(unittest.IsolatedAsyncioTestCase):
             self.event(kind="order", id=order_id, accepted=True, busy=False)
             self.event(kind="turn-start", turnId="t1", order=order_id)
             await self.settle()
-            self.assertEqual(self.phone.said(), [])
+            said = self.phone.said()
+            self.assertEqual(len(said), 1)
+            self.assertIn(said[0], module.HEARD_WORDS)
         finally:
             module.ORDER_WAIT_SECONDS = original
 
@@ -2253,12 +2257,76 @@ class ConversationTest(unittest.IsolatedAsyncioTestCase):
         finally:
             module.ORDER_WAIT_SECONDS = original
 
-    async def test_a_prompt_to_an_idle_session_says_nothing(self):
+    async def test_a_prompt_an_idle_session_took_gets_one_thinking_word(self):
+        # The owner couldn't tell a prompt that arrived from one the network lost, until the reply came.
         self.choose()
         self.finish_turn("Fix it.")
         self.event(kind="order", id=self.order()["id"], accepted=True, busy=False)
         await self.settle()
+        said = self.phone.said()
+        self.assertEqual(len(said), 1)
+        self.assertIn(said[0], module.HEARD_WORDS)
+        self.assertEqual(self.tones(), [])
+
+    async def test_the_thinking_word_comes_once_for_a_prompt(self):
+        self.choose()
+        self.finish_turn("Fix it.")
+        order_id = self.order()["id"]
+        self.event(kind="order", id=order_id, accepted=True, busy=False)
+        self.event(kind="order", id=order_id, ok=True)
+        await self.settle()
+        self.assertEqual(len(self.phone.said()), 1)
+
+    async def test_a_front_desk_that_took_a_prompt_gets_a_thinking_word(self):
+        self.session.front_desk = True
+        self.choose()
+        self.finish_turn("Post the launch update.")
+        self.event(kind="order", id=self.order()["id"], ok=True)
+        await self.settle()
+        said = self.phone.said()
+        self.assertEqual(len(said), 1)
+        self.assertIn(said[0], module.HEARD_WORDS)
+
+    async def test_no_thinking_word_for_what_isnt_a_prompt(self):
+        self.choose()
+        self.conversation.phone_message({"t": "tap"})
+        self.event(kind="order", id=self.order()["id"], accepted=True, busy=False)
+        await self.settle()
         self.assertEqual(self.phone.said(), [])
+
+    async def test_a_prompt_that_wasnt_delivered_gets_the_warning_tone(self):
+        self.choose()
+        self.finish_turn("Fix it.")
+        self.event(kind="order", id=self.order()["id"], error="no")
+        await self.settle()
+        self.assertEqual(self.tones(), ["warn"])
+        self.assertEqual(self.phone.said(), [NOT_SENT])
+
+    async def test_a_prompt_nobody_picked_up_gets_the_warning_tone(self):
+        with mock.patch.object(module, "ORDER_WAIT_SECONDS", 0.01):
+            self.choose()
+            self.finish_turn("Fix it.")
+            await self.settle()
+        self.assertEqual(self.tones(), ["warn"])
+        self.assertEqual(self.phone.said(), [module.NOT_REACHED])
+
+    async def test_a_prompt_refused_at_the_keyboard_gets_the_warning_tone(self):
+        self.choose()
+        self.finish_turn("Fix it.")
+        self.event(kind="order", id=self.order()["id"], drop="stopped at the keyboard")
+        await self.settle()
+        self.assertEqual(self.tones(), ["warn"])
+
+    async def test_no_heard_turns_off_the_word_and_the_tone(self):
+        self.conversation.heard = False
+        self.choose()
+        self.finish_turn("Fix it.")
+        self.event(kind="order", id=self.order()["id"], accepted=True, busy=False)
+        self.finish_turn("Fix that too.")
+        self.event(kind="order", id=self.order()["id"], error="no")
+        await self.settle()
+        self.assertEqual(self.phone.said(), [NOT_SENT])
+        self.assertEqual(self.tones(), [])
 
     async def test_a_prompt_spoken_while_a_reply_is_on_its_way_is_marked_unheard(self):
         # The session is idle by then, so only the gateway knows the question hasn't been heard.

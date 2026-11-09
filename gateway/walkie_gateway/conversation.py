@@ -32,7 +32,10 @@ and isn't a word that just played. The transcriber often misses so short a word 
 a reply, and a miss just lets the reply resume, so the owner says it again.
 
 A prompt spoken to a busy session is accepted and waits its turn. The mod tells
-the gateway as soon as it has the prompt, so the voice can say so.
+the gateway as soon as it has the prompt, so the voice can say so. A prompt an idle
+session has taken gets one thinking word, so the owner knows it arrived before the
+reply comes. A prompt that doesn't get through gets the warning tone ahead of its notice.
+Both are on unless the gateway is started with --no-heard.
 
 A session is chosen only by a fingerprint at Start, which the phone's hardware key
 signs, and it stays chosen only for that run of the phone. The run ends at Stop,
@@ -62,6 +65,7 @@ import json
 import logging
 import math
 import os
+import random
 import secrets
 import time
 
@@ -128,6 +132,9 @@ YES_SENT = "Sent your confirmation."
 YES_NOT_SENT = "I can't tell whether your confirmation was sent. Check before you rely on it."  # the command may have saved it, then failed
 REPLY_NOT_SPOKEN = "I couldn't read a reply aloud."
 NOT_FILED = "I can't tell whether that was filed."  # the command may have saved it, then failed
+
+# One of these, at random, says an idle session has the prompt. A busy one says QUEUED instead.
+HEARD_WORDS = ("Working.", "Pondering.", "Thinking.", "Mulling.", "Musing.", "Noodling.", "Cogitating.", "Confabulating.")
 
 PAUSED = "Paused."
 LISTENING = "Listening."
@@ -197,7 +204,8 @@ def is_state_notice(unit):
 
 
 class Conversation:
-    def __init__(self, speech, is_speech, new_decoder, encoder, clock=time.monotonic, voice_file=None, pause_file=None):
+    def __init__(self, speech, is_speech, new_decoder, encoder, clock=time.monotonic, voice_file=None, pause_file=None,
+                 heard=True):
         self.speech = speech
         self.new_decoder = new_decoder
         self.encoder = encoder
@@ -231,6 +239,7 @@ class Conversation:
         self.voice = self._load_voice()
         self.reply_voice = self.voice  # a choice takes effect from the next reply
         self.pause_file = pause_file
+        self.heard = heard          # say when a prompt has reached the session, and warn when it can't
         self.paused = bool(pause_file) and os.path.exists(pause_file)  # a restart mustn't start listening to a stranger
         self.order_prefix = secrets.token_hex(4)  # so a mod can't mistake an order from an earlier gateway
         self.next_order = 1
@@ -722,9 +731,19 @@ class Conversation:
         if order not in self.orders:
             return
         if order not in self.accepted:
+            self._not_delivered()
             self.say(NOT_REACHED)
         elif order in self.prompt_metrics and "queued" not in self.prompt_metrics[order].times:
             self.say(NOT_STARTED)
+
+    def _delivered(self):
+        if self.heard:
+            log.info("notice heard")
+            self.say(random.choice(HEARD_WORDS))
+
+    def _not_delivered(self):
+        if self.heard:
+            self._tone("warn")
 
     def _tone(self, name):
         if self.phone:
@@ -815,6 +834,8 @@ class Conversation:
                     self.say(QUEUED)
                     if order_id in self.prompt_metrics:
                         self.prompt_metrics[order_id].times["queued"] = 1
+                elif self.orders[order_id][0] == "submit":
+                    self._delivered()
             return
         order = self.orders.pop(order_id, None)
         self.accepted.discard(order_id)
@@ -827,6 +848,9 @@ class Conversation:
             self.say(YES_SENT if event.get("ok") else YES_NOT_SENT)
             return
         if event.get("ok") or what == "abort":
+            desk = self._chosen_session()
+            if event.get("ok") and what == "submit" and desk and desk.front_desk:
+                self._delivered()  # a front desk takes a prompt with no wait, so it says ok at once
             return
         metrics = self.prompt_metrics.pop(order_id, None)  # this prompt's turn won't come
         if metrics:
@@ -839,10 +863,12 @@ class Conversation:
                 # What's said over a reply may be its echo, so it can't replace words waiting to be typed.
                 if not (over_a_reply and self.typing_offer and self.clock() <= self.typing_offer[1]):
                     self.typing_offer = (value, self.clock() + TYPING_OFFER_SECONDS)
+                self._not_delivered()
                 self.say(STOPPED_AT_KEYBOARD)
                 if event.get("later"):
                     self.say(LATER_DROPPED)
             else:
+                self._not_delivered()
                 self.say(NOT_SENT)
         elif what == "type":
             refused = event.get("refused")
