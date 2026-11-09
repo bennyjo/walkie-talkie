@@ -10,7 +10,7 @@ rules come from running the mod against a stub:
 - An order whose write fails goes back in the queue, because that poll was already dead.
 
 Each poll also carries the session's own challenge, which a fingerprint on the phone signs
-to choose it, and when it last took a prompt. A session with no challenge is a mod from before
+to choose it, when it last took a prompt, and a short name for its login. A session with no challenge is a mod from before
 fingerprints, which can't check a choice, so the phone never sees it. Each answer to the chosen
 session names the run the fingerprint approved, and the mod keeps its grant only while answers do.
 So something that answers on the socket without having asked this gateway can't ride a grant.
@@ -32,6 +32,7 @@ log = logging.getLogger("walkie.mod")
 POLL_HOLD = 25
 SESSION_STALE = 35      # seconds with no poll before a session counts as gone
 MAX_BODY = 1 << 20
+MAX_LOGIN = 40          # characters of a login's name the phone shows
 
 
 class Session:
@@ -48,11 +49,20 @@ class Session:
         self.front_desk = False     # takes spoken prompts for another session, which does the work
         self.nonce = ""             # the session's own challenge, which the phone signs to choose it
         self.prompted_at = 0        # when it last took a prompt, in ms since the epoch, 0 if never
+        self.login = ""             # a short name for its login, such as "default" or "personal"
 
-    def describe(self, now_ms):
-        name = os.path.basename(self.cwd.rstrip("/")) or self.cwd
+    def describe(self, now_ms, home=None):
+        """What the phone shows. Two sessions in folders of the same name differ by where, and one folder open
+        on two logins differs by login. The mod sends only a folder it may name, so its parents may be named too."""
+        cwd = self.cwd.rstrip("/")
+        name = os.path.basename(cwd) or self.cwd
+        where = os.path.dirname(cwd) if name != self.cwd else ""
+        home = (home if home is not None else os.path.expanduser("~")).rstrip("/")
+        if home and (where == home or where.startswith(home + "/")):
+            where = "~" + where[len(home):]
         ago = max(0, round((now_ms - self.prompted_at) / 1000)) if self.prompted_at else None
-        return {"id": self.instance, "name": name, "session": self.session_id[:8], "nonce": self.nonce, "ago": ago}
+        return {"id": self.instance, "name": name, "where": where, "login": self.login,
+                "session": self.session_id[:8], "nonce": self.nonce, "ago": ago}
 
     def wake(self):
         if self.waiter and not self.waiter.done():
@@ -152,10 +162,11 @@ class ModLink:
         session = self._session(body)
         session.front_desk = body.get("role") == "front-desk"
         nonce, prompted_at = str(body.get("nonce") or ""), body.get("promptedAt") or 0
+        login = str(body.get("login") or "")[:MAX_LOGIN]
         if not isinstance(prompted_at, (int, float)):
             prompted_at = 0
-        if nonce != session.nonce or prompted_at != session.prompted_at:
-            session.nonce, session.prompted_at = nonce, prompted_at
+        if nonce != session.nonce or prompted_at != session.prompted_at or login != session.login:
+            session.nonce, session.prompted_at, session.login = nonce, prompted_at, login
             self.conversation.sessions_changed()
         session.poll_id += 1
         mine = session.poll_id

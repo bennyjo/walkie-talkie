@@ -5,7 +5,7 @@ This page covers a call from Start to Stop, pausing, how the gateway decides a m
 ## Start a call
 
 1. Plug in the receiver, and connect the earbuds.
-1. Open the app. It lists the live sessions, the one with the latest prompt first. Choose one.
+1. Open the app. It lists the live sessions, the one with the latest prompt first. Each row shows the folder's name and a short ID, and under them where the folder is, the login, and when the session last took a prompt. So two copies of one repository, or one folder open on two logins, look different. Choose one.
 1. Tap **Start**, allow the microphone and notifications the first time, and touch the fingerprint sensor. The prompt names the session you chose. You hear "Connected to" and its name.
 1. Lock the phone, and talk.
 
