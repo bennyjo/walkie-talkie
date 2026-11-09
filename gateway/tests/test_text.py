@@ -184,6 +184,17 @@ class UtteranceTest(unittest.TestCase):
         self.assertEqual(kind("No -"), "prompt")
         self.assertEqual(kind("No, wait for the build."), "prompt")
         self.assertEqual(kind("Yeah."), "prompt")
+        self.assertEqual(kind("Pause."), "pause")
+        self.assertEqual(kind("PAUSE!"), "pause")
+        self.assertEqual(kind("Um, pause."), "pause")
+        self.assertEqual(kind("Pause it."), "pause")
+        self.assertEqual(kind("Paused."), "pause")
+        self.assertEqual(kind("Pause the build."), "prompt")
+        self.assertEqual(kind("Should I pause?"), "prompt")
+        for word in ("Go.", "play", "START!", "Uh, go."):
+            self.assertEqual(kind(word), "resume", word)
+        for prompt in ("Let's go.", "Play it again.", "Start the tests."):
+            self.assertEqual(kind(prompt), "prompt", prompt)
 
     def test_trailing_words(self):
         self.assertTrue(trails_off("I want to fix that and"))

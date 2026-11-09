@@ -386,6 +386,16 @@ class ConversationTest(unittest.IsolatedAsyncioTestCase):
         self.yes()
         self.assertEqual(len(self.session.orders), 0)
 
+    async def test_pausing_leaves_nothing_to_say_yes_to(self):
+        await self.play_readback()
+        self.finish_turn("Pause.")
+        self.yes()  # while paused, a yes is only someone talking
+        self.finish_turn("Go.")
+        self.yes()
+        await self.settle()
+        self.assertEqual(len(self.session.orders), 0)
+        self.assertIn(NOTHING_TO_CONFIRM, self.phone.said())
+
     async def test_a_cough_leaves_the_read_back_open(self):
         await self.play_readback()
         self.finish_turn("um")
@@ -979,7 +989,7 @@ class ConversationTest(unittest.IsolatedAsyncioTestCase):
         self.choose()
         await self.hear(QUIET, 1.1)
         self.event(kind="turn-start", turnId="t")
-        self.conversation.frames.extend((b"reply:%d" % i, None, True, [], None) for i in range(int(seconds * 50)))
+        self.conversation.frames.extend((b"reply:%d" % i, None, True, [], None, False) for i in range(int(seconds * 50)))
         self.conversation.frames_ready.set()
         await self.settle(0.1)
 
@@ -1043,7 +1053,7 @@ class ConversationTest(unittest.IsolatedAsyncioTestCase):
         await self.settle(0.05)
         self.conversation.speech.transcribe = lambda audio: "The tests pass on the main branch."
         self.event(kind="turn-start", turnId="t")
-        self.conversation.frames.extend((b"reply:%d" % i, None, True, [], None) for i in range(1000))
+        self.conversation.frames.extend((b"reply:%d" % i, None, True, [], None, False) for i in range(1000))
         self.conversation.frames_ready.set()
         await self.settle(0.1)
         self.conversation.phone_message({"t": "hold", "id": 3})
@@ -1082,7 +1092,7 @@ class ConversationTest(unittest.IsolatedAsyncioTestCase):
         self.event(kind="turn-start", turnId="t")
         self.conversation.say(sentence, None, DEFAULT_VOICE)
         await self.settle(0.1)
-        self.conversation.frames.extend((b"reply:%d" % i, None, True, [], None) for i in range(1000))
+        self.conversation.frames.extend((b"reply:%d" % i, None, True, [], None, False) for i in range(1000))
         self.conversation.frames_ready.set()
         await self.settle(0.1)
 
@@ -1121,7 +1131,7 @@ class ConversationTest(unittest.IsolatedAsyncioTestCase):
         self.conversation.typing_offer = ("Fix the test.", self.conversation.clock() + 60)
         self.conversation.say(STOPPED_AT_KEYBOARD)
         await self.settle(0.1)
-        self.conversation.frames.extend((b"reply:%d" % i, None, False, [], None) for i in range(1000))
+        self.conversation.frames.extend((b"reply:%d" % i, None, False, [], None, False) for i in range(1000))
         self.conversation.frames_ready.set()
         await self.settle(0.1)
         self.assertEqual(await self.talk_over_with("Type it."), 1)
@@ -1361,7 +1371,7 @@ class ConversationTest(unittest.IsolatedAsyncioTestCase):
         self.messages_end_quickly()
         self.choose()
         await self.hear(QUIET, 1.1)
-        self.conversation.frames.extend((b"reply:%d" % i, None, True, [], None) for i in range(10))
+        self.conversation.frames.extend((b"reply:%d" % i, None, True, [], None, False) for i in range(10))
         self.conversation.frames_ready.set()
         await self.hear(QUIET, 0.3)
         self.assertFalse(self.conversation.frames)
@@ -1681,6 +1691,397 @@ class ConversationTest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.conversation.detector.talking)
         self.assertEqual(len(self.session.orders), 0)
 
+    # --- pausing -------------------------------------------------------------------
+
+    def say_over_the_reply(self, text, loud=True):
+        """What the transcriber makes of the words, and the hold the phone sends for them."""
+        self.conversation.speech.transcribe = lambda audio: text
+        if not loud:
+            self.conversation.owner_level = turns.loudness(np.frombuffer(VOICE, dtype=np.int16)) + 20
+        self.conversation.phone_message({"t": "hold", "id": 50})
+
+    async def short_word_over_the_reply(self, text, loud=True):
+        self.say_over_the_reply(text, loud)
+        await self.hear(VOICE, 0.3)
+        await self.hear(QUIET, module.OUTPUT_DELAY_SECONDS + module.HOLD_WAIT_SECONDS)
+
+    async def test_a_lone_pause_stops_listening_and_never_reaches_the_session(self):
+        self.choose()
+        for text in ("Pause.", "pause", "Pause it."):
+            with self.subTest(text=text):
+                self.conversation.paused = False
+                self.finish_turn(text)
+                self.assertTrue(self.conversation.paused)
+                self.assertEqual(len(self.session.orders), 0)
+        await self.settle()
+        self.assertEqual(self.phone.said(), [module.PAUSED])
+
+    async def test_a_prompt_with_the_word_pause_in_it_goes_to_the_session(self):
+        self.choose()
+        self.finish_turn("Pause the build.")
+        self.assertFalse(self.conversation.paused)
+        self.assertEqual(self.order()["submit"], "Pause the build.")
+
+    async def test_pause_needs_no_session(self):
+        self.finish_turn("Pause.")
+        self.assertTrue(self.conversation.paused)
+        await self.settle()
+        self.assertEqual(self.phone.said(), [module.PAUSED])
+        self.assertEqual(self.tones(), [])
+
+    async def test_nothing_heard_while_paused_reaches_the_session(self):
+        self.choose()
+        self.finish_turn("Pause.")
+        self.conversation.typing_offer = ("Fix the test.", self.conversation.clock() + 60)
+        level = self.conversation.owner_level
+        for text in ("Nice to meet you.", "Cancel.", "Type it.", "Let's go."):
+            self.conversation.detector.finished_level = -3.0
+            self.finish_turn(text)
+        await self.settle()
+        self.assertEqual(len(self.session.orders), 0)
+        self.assertEqual(self.phone.said(), [module.PAUSED])
+        self.assertEqual(self.conversation.owner_level, level)
+        self.assertTrue(self.conversation.paused)
+
+    async def test_each_resume_word_starts_listening_and_is_never_a_prompt(self):
+        self.choose()
+        for text in ("Go.", "Play.", "Start."):
+            with self.subTest(text=text):
+                self.phone.speech.clear()
+                self.finish_turn("Pause.")
+                self.finish_turn(text)
+                self.assertFalse(self.conversation.paused)
+                self.assertEqual(len(self.session.orders), 0)
+                await self.settle()
+                self.assertIn(module.LISTENING, self.phone.said())
+        self.finish_turn("Fix the failing test.")
+        self.assertEqual(self.order()["submit"], "Fix the failing test.")
+
+    async def test_the_resume_words_mean_nothing_special_unless_paused(self):
+        self.choose()
+        for text in ("Go.", "Play.", "Start."):
+            self.finish_turn(text)
+            self.assertEqual(self.order()["submit"], text)
+        await self.settle()
+        self.assertEqual(self.phone.said(), [])
+
+    async def test_a_tap_still_stops_the_turn_while_paused_and_does_not_resume(self):
+        self.choose()
+        self.event(kind="turn-start", turnId="t")
+        self.finish_turn("Pause.")
+        self.conversation.phone_message({"t": "tap", "gen": 0})
+        self.assertEqual(self.order()["abort"], "t")
+        self.assertTrue(self.conversation.paused)
+
+    async def test_a_running_turn_keeps_running_and_its_reply_plays_while_paused(self):
+        self.choose()
+        self.event(kind="turn-start", turnId="t")
+        self.finish_turn("Pause.")
+        self.event(kind="text", turnId="t", text="The tests pass on main. ")
+        self.event(kind="turn-end", turnId="t", reason="end")
+        await self.settle(SPOKEN_SECONDS * 2 + module.LEAD_SECONDS + module.OUTPUT_DELAY_SECONDS + 0.2)
+        self.assertEqual(len(self.session.orders), 0)
+        self.assertEqual(self.phone.said(), [module.PAUSED, "The tests pass on main."])
+
+    async def test_the_confirmation_goes_ahead_of_a_waiting_reply(self):
+        await self.reply_sounding()
+        self.conversation.say("The next sentence.", None, DEFAULT_VOICE)
+        await self.settle(0.1)
+        self.finish_turn("Pause.")
+        await self.settle(module.LEAD_SECONDS + module.OUTPUT_DELAY_SECONDS + SPOKEN_SECONDS + 0.3)
+        said = self.phone.said()
+        self.assertIn(module.PAUSED, said)
+        self.assertNotIn("The next sentence.", said)
+        self.assertGreater(len(self.conversation.frames), 100)  # the reply is still there, and it carries on
+
+    async def test_a_lone_pause_over_a_reply_pauses_and_the_reply_carries_on(self):
+        await self.reply_sounding()
+        cuts = self.cuts()
+        await self.short_word_over_the_reply("Pause.")
+        self.assertTrue(self.conversation.paused)
+        self.assertEqual(self.controls("resume"), [{"t": "resume", "id": 50, "leak": False}])
+        self.assertEqual(self.controls("leak"), [])
+        self.assertEqual(self.cuts(), cuts)
+        self.assertEqual(len(self.session.orders), 0)
+        self.assertEqual(self.conversation.reply_turn, "t")
+
+    async def test_a_slow_pause_over_a_reply_stops_no_turn(self):
+        await self.reply_sounding()
+        cuts = self.cuts()
+        self.say_over_the_reply("Pause.")
+        await self.hear(VOICE, module.OUTPUT_DELAY_SECONDS + 0.4)
+        self.assertEqual(self.cuts(), cuts)
+        await self.hear(QUIET, module.HOLD_WAIT_SECONDS + 0.2)
+        self.assertTrue(self.conversation.paused)
+        self.assertEqual(self.cuts(), cuts)
+        self.assertEqual(len(self.session.orders), 0)
+
+    async def test_speech_that_carries_on_past_a_pause_is_a_talk_over_as_ever(self):
+        await self.reply_sounding()
+        self.say_over_the_reply("Pause.")
+        await self.hear(VOICE, module.OUTPUT_DELAY_SECONDS + 0.4)
+        self.conversation.speech.transcribe = lambda audio: "Pause the build."
+        await self.hear(VOICE, 0.4)
+        self.assertEqual(self.order()["abort"], "t")
+        await self.hear(QUIET, 0.8)
+        self.assertEqual(self.order()["submit"], "Pause the build.")
+        self.assertFalse(self.conversation.paused)
+
+    async def test_a_word_said_as_a_hold_settles_then_carried_on_from_isnt_lone(self):
+        await self.reply_sounding()
+        turns.END_HOLD, turns.THINKING_HOLD = 30, 30
+        self.say_over_the_reply("Pause.")
+        await self.hear(VOICE, 0.3)
+        real = self.conversation.speech.transcribe
+
+        def slowly(audio):
+            threading.Event().wait(0.5)
+            return real(audio)
+        self.conversation.speech.transcribe = slowly
+        await self.hear(QUIET, module.OUTPUT_DELAY_SECONDS + module.HOLD_WAIT_SECONDS - 0.3)
+        await self.hear(VOICE, 0.6)  # they carried on while it was being read
+        self.assertFalse(self.conversation.paused)
+        self.assertIsNotNone(self.conversation.hold)
+
+    async def test_the_reply_saying_the_word_does_not_pause(self):
+        await self.reply_played("I will pause here")
+        await self.short_word_over_the_reply("Pause.")
+        self.assertFalse(self.conversation.paused)
+        self.assertEqual(len(self.session.orders), 0)
+        self.assertEqual(self.controls("resume"), [{"t": "resume", "id": 50, "leak": False}])
+
+    async def test_the_reply_saying_pause_is_not_saved_by_the_transcriber_adding_it(self):
+        await self.reply_played("I will pause here")
+        await self.short_word_over_the_reply("Pause it.")
+        self.assertFalse(self.conversation.paused)
+
+    async def test_a_quieter_voice_saying_pause_over_a_reply_does_not_pause(self):
+        await self.reply_sounding()
+        turns.END_HOLD, turns.THINKING_HOLD = 30, 30
+        calls = []
+        self.conversation.owner_level = turns.loudness(np.frombuffer(VOICE, dtype=np.int16)) + 20
+        self.conversation.speech.transcribe = lambda audio: calls.append(1) or "Pause."
+        self.conversation.phone_message({"t": "hold", "id": 50})
+        await self.hear(VOICE, 0.3)
+        await self.hear(QUIET, module.OUTPUT_DELAY_SECONDS + module.HOLD_WAIT_SECONDS)
+        self.assertFalse(self.conversation.paused)
+        self.assertEqual(calls, [])  # never read
+        self.assertEqual([c["id"] for c in self.controls("resume")], [50])
+
+    async def test_another_short_word_over_a_reply_still_just_resumes(self):
+        await self.reply_sounding()
+        await self.short_word_over_the_reply("Stop.")
+        self.assertFalse(self.conversation.paused)
+        self.assertEqual(self.controls("resume"), [{"t": "resume", "id": 50, "leak": False}])
+        self.assertEqual(len(self.session.orders), 0)
+
+    async def test_a_resume_word_over_a_reply_starts_listening_only_while_paused(self):
+        await self.reply_sounding()
+        await self.short_word_over_the_reply("Go.")
+        self.assertFalse(self.conversation.paused)
+        self.conversation.paused = True
+        self.phone.controls.clear()
+        await self.short_word_over_the_reply("Go.")
+        self.assertFalse(self.conversation.paused)
+        self.assertEqual(self.controls("resume"), [{"t": "resume", "id": 50, "leak": False}])
+        self.assertEqual(self.controls("leak"), [])
+        self.assertEqual(len(self.session.orders), 0)
+
+    async def test_the_reply_saying_go_does_not_start_listening(self):
+        await self.reply_played("You can go")
+        self.conversation.paused = True
+        await self.short_word_over_the_reply("Go.")
+        self.assertTrue(self.conversation.paused)
+
+    async def test_talking_over_a_reply_while_paused_stops_nothing_and_teaches_nothing(self):
+        await self.reply_sounding()
+        self.conversation.paused = True
+        cuts = self.cuts()
+        self.say_over_the_reply("Nice to meet you, what brings you here today?")
+        await self.hear(VOICE, module.OUTPUT_DELAY_SECONDS + 1)
+        self.assertEqual(self.cuts(), cuts)
+        self.assertEqual(self.controls("resume"), [])  # the reply waits until they've stopped
+        await self.hear(QUIET, module.HOLD_WAIT_SECONDS + 0.2)
+        self.assertEqual(self.cuts(), cuts)
+        self.assertEqual(self.controls("resume"), [{"t": "resume", "id": 50, "leak": False}])
+        self.assertEqual(self.controls("leak"), [])
+        self.assertEqual(len(self.session.orders), 0)
+        self.assertEqual(self.conversation.reply_turn, "t")
+
+    async def test_a_short_sound_while_paused_teaches_the_phone_nothing(self):
+        await self.reply_sounding()
+        self.conversation.paused = True
+        await self.short_word_over_the_reply("The log.", loud=False)
+        self.assertEqual(self.controls("resume"), [{"t": "resume", "id": 50, "leak": False}])
+
+    async def test_a_gap_in_the_mic_while_paused_says_nothing(self):
+        self.choose()
+        self.mic(np.zeros(WINDOW, dtype=np.int16), 1.5)
+        self.conversation.paused = True
+        self.mic(np.array(([3000] * 8 + [-3000] * 8) * (WINDOW // 16), dtype=np.int16), 1)
+        self.assertTrue(self.conversation.detector.talking)
+        self.conversation.mic_gap()
+        await self.settle()
+        self.assertEqual(self.phone.said(), [])
+
+    async def test_talking_over_the_end_of_a_reply_while_paused_gives_no_warning(self):
+        self.choose()
+        loud = np.array(([3000] * 8 + [-3000] * 8) * (WINDOW // 16), dtype=np.int16)
+        self.mic(np.zeros(WINDOW, dtype=np.int16), 1.5)
+        self.conversation.paused = True
+        self.conversation.say("A sentence.")
+        await self.settle(0.05)
+        self.mic(loud, 0.5)
+        await self.settle(SPOKEN_SECONDS + module.LEAD_SECONDS + module.OUTPUT_DELAY_SECONDS)
+        self.mic(loud, 1)
+        self.assertEqual(self.tones(), [])
+
+    async def test_a_pause_survives_a_restart_and_a_new_run_says_so(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = os.path.join(folder, "paused")
+
+            def make():
+                made = Conversation(FakeSpeech(), bool, FakeDecoder, FakeEncoder(), pause_file=path)
+                made.phone, made.modlink = FakePhone(), FakeLink()
+                return made
+
+            first = make()
+            self.assertFalse(first.paused)
+            first._turn_finished("Pause.", 0)
+            self.assertEqual(os.stat(path).st_mode & 0o777, 0o600)
+            second = make()
+            self.assertTrue(second.paused)
+            second.phone_new_run()
+            self.assertEqual([unit[0] for unit in second.say_queue], [module.STILL_PAUSED])
+            second._turn_finished("Nice to meet you.", 0)
+            self.assertEqual(len(second.modlink.sessions["7"].orders), 0)
+            second._turn_finished("Go.", 0)
+            self.assertFalse(os.path.exists(path))
+            self.assertFalse(make().paused)
+
+    def heard(self, gen=None):
+        """Each sentence the phone was sent, in the order it plays, as many times as it plays."""
+        packets = [packet for sent_gen, packet in self.phone.speech if gen is None or sent_gen == gen]
+        return [packet.rsplit(":", 1)[0] for packet in packets if packet.endswith(":0")]
+
+    def whole(self, text, gen):
+        frames = [packet for sent_gen, packet in self.phone.speech if sent_gen == gen and packet.startswith(text + ":")]
+        return frames == [packet.decode() for packet in FakeEncoder().encode(text)]
+
+    def sound_due(self, seconds):
+        """A reply just went out, so a notice has to wait for it, as it does after any reply."""
+        self.conversation.reply_heard = True
+        self.conversation.played_until = self.conversation.clock() + seconds
+
+    async def test_only_the_current_state_is_heard_if_an_earlier_notice_has_not_gone_out(self):
+        played = 0.3 + module.OUTPUT_DELAY_SECONDS + SPOKEN_SECONDS + module.LEAD_SECONDS
+        self.choose()
+        for window, wait in (("in the queue", None), ("in frames", 0.15)):
+            with self.subTest(window=window):
+                self.phone.speech.clear()
+                self.sound_due(0.3)
+                self.finish_turn("Pause.")
+                if wait is not None:
+                    await asyncio.sleep(wait)
+                if window == "in frames":
+                    self.assertEqual(self.phone.speech, [])
+                    self.assertTrue(self.conversation.frames)
+                self.finish_turn("Go.")
+                await self.settle(played)
+                self.assertFalse(self.conversation.paused)
+                self.assertEqual(self.heard(), [module.LISTENING])
+
+    async def test_only_the_current_state_is_heard_if_an_earlier_notice_is_being_made(self):
+        release = threading.Event()
+        self.addCleanup(release.set)
+        synthesize = self.conversation.speech.synthesize
+        self.conversation.speech.synthesize = lambda text, voice: (release.wait(), synthesize(text, voice))[1]
+        self.choose()
+        self.finish_turn("Pause.")
+        await self.settle(0.05)
+        self.assertEqual(self.conversation.synthesizing[0], module.PAUSED)
+        self.finish_turn("Go.")
+        release.set()
+        await self.settle(SPOKEN_SECONDS + module.LEAD_SECONDS + 0.3)
+        self.assertEqual(self.heard(), [module.LISTENING])
+
+    async def test_the_rest_of_a_state_notice_stops_when_the_state_changes(self):
+        self.choose()
+        self.finish_turn("Pause.")
+        await self.settle(0.1)
+        self.conversation.frames.extend((b"%s:%d" % (module.PAUSED.encode(), i), None, False, [], None, True) for i in range(100, 150))
+        self.conversation.frames_ready.set()
+        self.finish_turn("Go.")
+        await self.settle(SPOKEN_SECONDS + module.LEAD_SECONDS + 0.3)
+        self.assertEqual([packet for _, packet in self.phone.speech if packet.endswith(":149")], [])
+        self.assertEqual(self.phone.said()[-1], module.LISTENING)
+
+    async def test_a_new_state_notice_keeps_the_waiting_reply_behind_it(self):
+        self.choose()
+        self.sound_due(0.8)  # far enough ahead that more of the reply isn't due yet
+        self.conversation.say("The next sentence.", None, DEFAULT_VOICE)
+        await self.settle(0.1)
+        self.finish_turn("Pause.")
+        await self.settle(0.1)
+        self.finish_turn("Go.")
+        await self.settle(0.8 + 2 * module.OUTPUT_DELAY_SECONDS + 2 * SPOKEN_SECONDS + module.LEAD_SECONDS)
+        self.assertEqual(self.heard(), [module.LISTENING, "The next sentence."])
+
+    async def test_a_reply_with_the_words_of_a_state_notice_replaces_nothing(self):
+        self.choose()
+        self.finish_turn("Pause.")
+        self.conversation.say(module.LISTENING, None, DEFAULT_VOICE)
+        await self.settle(module.OUTPUT_DELAY_SECONDS + 2 * SPOKEN_SECONDS + module.LEAD_SECONDS + 0.2)
+        self.assertEqual(self.heard(), [module.PAUSED, module.LISTENING])
+        self.assertTrue(self.conversation.paused)
+
+    async def test_choosing_a_session_again_after_a_new_run_still_says_the_whole_notice(self):
+        for window, wait in (("not yet sent", None), ("partly played", 0.08)):
+            with self.subTest(window=window):
+                self.conversation.phone_message({"t": "release"})
+                self.conversation.paused = True
+                self.phone.speech.clear()
+                self.conversation.phone_new_run()
+                self.conversation.phone_connected()
+                if wait is not None:
+                    await self.settle(wait)
+                self.choose()
+                await self.settle(SPOKEN_SECONDS + module.LEAD_SECONDS + 0.2)
+                self.assertEqual(self.heard(self.conversation.gen), [module.STILL_PAUSED])
+                self.assertTrue(self.whole(module.STILL_PAUSED, self.conversation.gen))
+
+    async def test_choosing_a_session_keeps_a_confirmation_that_has_not_finished(self):
+        self.choose()
+        self.finish_turn("Pause.")
+        await self.settle(0.08)
+        self.conversation.phone_message({"t": "select", "session": "8"})
+        await self.settle(SPOKEN_SECONDS + module.LEAD_SECONDS + 0.2)
+        self.assertTrue(self.whole(module.PAUSED, self.conversation.gen))
+
+    async def test_choosing_a_session_does_not_repeat_a_notice_that_finished(self):
+        self.conversation.paused = True
+        self.conversation.phone_new_run()
+        await self.settle(SPOKEN_SECONDS + module.LEAD_SECONDS + module.OUTPUT_DELAY_SECONDS + 0.2)
+        self.assertEqual(self.heard(), [module.STILL_PAUSED])
+        self.choose()
+        await self.settle()
+        self.assertEqual(self.heard(self.conversation.gen), [])
+
+    async def test_a_tap_silences_a_state_notice_and_choosing_a_session_does_not_bring_it_back(self):
+        self.conversation.paused = True
+        self.conversation.phone_new_run()
+        await self.settle(0.08)
+        self.conversation.phone_message({"t": "tap", "gen": 0})
+        self.choose()
+        await self.settle()
+        self.assertEqual(self.heard(self.conversation.gen), [])
+        self.assertTrue(self.conversation.paused)
+
+    async def test_a_new_run_with_nothing_paused_says_nothing(self):
+        self.conversation.phone_new_run()
+        await self.settle()
+        self.assertEqual(self.phone.said(), [])
+
     # --- audio that went missing --------------------------------------------------
 
     async def test_a_gap_in_the_mic_throws_away_the_message_in_progress(self):
@@ -1944,7 +2345,7 @@ class ConversationTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_choosing_another_session_cuts_the_old_ones_speech(self):
         self.choose()
-        self.conversation.frames.extend((b"old:%d" % i, None, False, [], None) for i in range(100))
+        self.conversation.frames.extend((b"old:%d" % i, None, False, [], None, False) for i in range(100))
         self.conversation.say("Old words.")
         gen_before = self.conversation.gen
         self.choose("8")

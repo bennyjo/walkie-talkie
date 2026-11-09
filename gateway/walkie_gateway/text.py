@@ -397,6 +397,8 @@ TRAILING = {
 CANCEL = {"cancel", "never mind cancel", "nevermind cancel"}
 UNSURE_YES = re.compile("(?:\\?|-|\u2013|\u2014|\u2026|\\.\\.\\.)\\s*$")  # "Yes?" asks, and "No -" was going to say more
 CONFIRM_TYPING = {"type it", "type that", "yes type it", "yes type that"}
+PAUSE = {"pause", "pause it", "paused"}  # the transcriber often hears a lone "pause" as "Pause it." or "Paused."
+RESUME = {"go", "play", "start"}  # these mean something only while paused
 
 
 def words_of(text):
@@ -409,18 +411,26 @@ def trails_off(text):
     return bool(words) and words[-1] in TRAILING
 
 
+def spoken_words(text):
+    return [w for w in words_of(text) if w not in FILLERS]
+
+
 def kind(text):
-    """What an utterance asks for: noise, cancel, confirm-typing, yes, no, or prompt."""
+    """What an utterance asks for: noise, cancel, confirm-typing, yes, no, pause, resume, or prompt."""
     words = words_of(text)
     if len("".join(words)) < 2 or all(w in FILLERS for w in words):
         return "noise"
-    spoken = " ".join(w for w in words if w not in FILLERS)
+    spoken = " ".join(spoken_words(text))
     if spoken in CANCEL:
         return "cancel"
     if spoken in CONFIRM_TYPING:
         return "confirm-typing"
     if spoken in ("yes", "no"):
         return "prompt" if UNSURE_YES.search(text) else spoken
+    if spoken in PAUSE:
+        return "pause"
+    if spoken in RESUME:
+        return "resume"
     return "prompt"
 
 

@@ -23,6 +23,14 @@ played out, with nothing more on its way, speech in its output delay is an ordin
 message, even a single word. A tap still cuts
 everything at once, and a reply waits while you're mid-message, pauses included.
 
+A lone "pause" stops listening, and that survives a dropped connection, a new run of
+the app, and a restart. While paused, what's heard is only checked for a lone "go",
+"play", or "start": no prompt, no talk-over, and no lesson for the phone. A running
+turn carries on, and its reply plays. Over a reply, either word is too short to count
+as talking over it, so it's read when its hold settles, if it's as loud as the owner
+and isn't a word that just played. The transcriber often misses so short a word over
+a reply, and a miss just lets the reply resume, so the owner says it again.
+
 A prompt spoken to a busy session is accepted and waits its turn. The mod tells
 the gateway as soon as it has the prompt, so the voice can say so.
 
@@ -41,7 +49,7 @@ comes first, after a reply with nothing left out has played through, and within
 READBACK_SECONDS. A spoken yes alone confirms nothing: the app then shows the
 words you heard, and only a fingerprint there files the confirmation for the
 session that asked. A no in that wait ends it and sends nothing. Anything else also
-leaves nothing to say yes to: a tap, another prompt, a newer reply, or the wait
+leaves nothing to say yes to: a tap, another prompt, a pause, a newer reply, or the wait
 running out.
 
 Of those replies, a tap cuts only the one playing. It means you're about to talk, so
@@ -52,6 +60,7 @@ import collections
 import concurrent.futures
 import json
 import logging
+import math
 import os
 import secrets
 import time
@@ -60,7 +69,7 @@ import numpy as np
 
 from . import security
 from .speech import DEFAULT_VOICE, VOICES
-from .text import LEFT_OUT, SpeechFilter, kind, sanitize_prompt, words_of
+from .text import LEFT_OUT, SpeechFilter, kind, sanitize_prompt, spoken_words, words_of
 from .turns import SECONDS, TurnDetector, speaking_level
 
 log = logging.getLogger("walkie.conversation")
@@ -78,6 +87,7 @@ OWNER_MARGIN_DB = 4.5       # a talk-over this much quieter than the owner's las
 ECHO_MIN_WORDS = 5          # anything shorter is the owner, because a short answer often repeats the question's words
 ECHO_SECONDS = 4.0          # how far back before a hold a word counts as just played
 PLAYED_WORDS = 80           # how many of the last played words are kept for that check
+LONE_WORD_SECONDS = 1.5     # speech longer than this over a reply can't be a lone word, so it isn't transcribed
 MIC_STALE_SECONDS = 5.0     # no microphone audio for this long: a reply stops waiting for the end of a message
 TYPING_OFFER_SECONDS = 30   # how long the offer to type a refused prompt stands
 ORDER_WAIT_SECONDS = 10     # the mod hasn't picked up a prompt in this time: say so
@@ -119,6 +129,13 @@ YES_NOT_SENT = "I can't tell whether your confirmation was sent. Check before yo
 REPLY_NOT_SPOKEN = "I couldn't read a reply aloud."
 NOT_FILED = "I can't tell whether that was filed."  # the command may have saved it, then failed
 
+PAUSED = "Paused."
+LISTENING = "Listening."
+STILL_PAUSED = "Still paused. Say go to start listening."
+# These go ahead of a reply, because a whole reply can be waiting, and the owner is waiting to know.
+# Only the latest is true, so it replaces any that hasn't gone out, and the last one heard is the current state.
+STATE_NOTICES = {PAUSED, LISTENING, STILL_PAUSED}
+
 
 class Relayed:
     """A relayed reply, in the words it was spoken in. It rides the speech queue behind its words, and they've played when it comes up."""
@@ -137,6 +154,7 @@ NOTICE_NAMES = {
     NOTHING_TO_CONFIRM: "nothing-to-confirm", CONFIRM_IN_APP: "confirm-in-app", NOT_CONFIRMED: "not-confirmed",
     YES_SENT: "yes-sent", YES_NOT_SENT: "yes-not-sent", SESSION_CLOSED: "session-closed", IDLE_ENDED: "idle-ended",
     REPLY_NOT_SPOKEN: "reply-not-spoken", NOT_FILED: "not-filed",
+    PAUSED: "paused", LISTENING: "listening", STILL_PAUSED: "still-paused",
 }
 
 
@@ -172,8 +190,14 @@ class Hold:
         self.levels = []        # the speech heard, which outlasts the detector forgetting it
 
 
+def is_state_notice(unit):
+    """A reply's sentence can have the same words, but it comes with a voice."""
+    text, _, reply_voice, _ = unit
+    return reply_voice is None and text in STATE_NOTICES
+
+
 class Conversation:
-    def __init__(self, speech, is_speech, new_decoder, encoder, clock=time.monotonic, voice_file=None):
+    def __init__(self, speech, is_speech, new_decoder, encoder, clock=time.monotonic, voice_file=None, pause_file=None):
         self.speech = speech
         self.new_decoder = new_decoder
         self.encoder = encoder
@@ -181,7 +205,7 @@ class Conversation:
         self.phone = None           # set once the phone server exists
         self.modlink = None         # set once the mod link exists
         self.decoder = new_decoder()
-        self.detector = TurnDetector(is_speech, self._transcribe, self._turn_finished, clock, lambda: self._tone("warn"))
+        self.detector = TurnDetector(is_speech, self._transcribe, self._turn_finished, clock, self._missed_start)
         self.stt_pool = concurrent.futures.ThreadPoolExecutor(1, thread_name_prefix="stt")
         self.tts_pool = concurrent.futures.ThreadPoolExecutor(1, thread_name_prefix="tts")
         self.chosen = None          # the instance of the chosen session
@@ -196,6 +220,8 @@ class Conversation:
         self.reply_turn = None      # the spoken turn now running
         self.reply_filter = None
         self.hold = None            # a Hold while someone may be talking over the reply
+        self.state_notice = None    # the last state notice said, until something cuts it
+        self.state_notice_ends = 0.0  # when it's done playing: never, until all of it has gone out
         self.reply_heard = False    # the last sound due was a reply's, not a notice's
         self.cut_unheard = False    # the next message cut a reply off, so its speaker hasn't heard all of it
         self.over_a_reply = False   # the next message started under a hold
@@ -204,6 +230,8 @@ class Conversation:
         self.voice_file = voice_file
         self.voice = self._load_voice()
         self.reply_voice = self.voice  # a choice takes effect from the next reply
+        self.pause_file = pause_file
+        self.paused = bool(pause_file) and os.path.exists(pause_file)  # a restart mustn't start listening to a stranger
         self.order_prefix = secrets.token_hex(4)  # so a mod can't mistake an order from an earlier gateway
         self.next_order = 1
         self.orders = {}            # order id -> (what, text)
@@ -236,6 +264,8 @@ class Conversation:
         self.detector.reset()
         self._cut_speech()
         self._set_chosen(None)
+        if self.paused:
+            self.say(STILL_PAUSED)
 
     def phone_connected(self):
         self.phone.send_control({"t": "cut", "gen": self.gen})
@@ -250,7 +280,7 @@ class Conversation:
 
     def mic_gap(self):
         """Audio went missing. What was being said isn't whole, and what comes next may have lost its start."""
-        if self.detector.talking:
+        if self.detector.talking and not self.paused:
             self.say(LOST_PART)
         self.detector.reset()
         self.detector.skip_speech()
@@ -324,6 +354,7 @@ class Conversation:
         if instance == self.chosen:
             return
         queued = any("queued" in metrics.times for metrics in self.prompt_metrics.values())
+        unfinished = self._unfinished_state_notice()
         self._cut_speech()
         self.orders.clear()
         self.accepted.clear()
@@ -340,7 +371,12 @@ class Conversation:
             self.modlink.sessions[instance].wake()
             if queued:  # the session that had them drops them when it hears it was let go
                 self.say(QUEUE_DROPPED)
+        if unfinished:  # it's about listening, not the session, and it may be the only sign of a pause
+            self.say(unfinished)
         self.sessions_changed()
+
+    def _unfinished_state_notice(self):
+        return self.state_notice if self.clock() < self.state_notice_ends + OUTPUT_DELAY_SECONDS else None
 
     def _cut_speech(self, at_least=0):
         self._cut_sound(at_least)
@@ -366,6 +402,7 @@ class Conversation:
         self.gen = max(self.gen + 1, at_least)
         self.played_words.clear()
         self.played_until = 0.0
+        self.state_notice = None
         self.hold = None
         self.phone.forget_speech()
         self.phone.send_control({"t": "cut", "gen": self.gen})
@@ -429,13 +466,12 @@ class Conversation:
         if hold.mark is None and not self.detector.quiet:
             hold.mark = self.detector.voiced
             hold.level_mark = len(self.detector.speech_levels)
-        if hold.mark is not None and self.detector.voiced - hold.mark >= CONFIRM_WINDOWS \
+        if hold.mark is not None and self.detector.voiced - hold.mark >= CONFIRM_WINDOWS and not self.paused \
                 and self._as_loud_as_owner(self.detector.speech_levels[hold.level_mark:]) and not hold.checking:
             hold.checking = True
             asyncio.ensure_future(self._confirm(hold))
         elif self._hold_settled() and not hold.checking:
-            self.detector.reset()  # it ended inside the output delay, or was someone quieter: not a message
-            self._release_hold()
+            self._settle(hold)  # it ended inside the output delay, or was someone quieter: not a message
 
     def _as_loud_as_owner(self, heard):
         """Someone nearby is quieter than the wearer. Until the owner has spoken, nothing can be compared."""
@@ -456,14 +492,38 @@ class Conversation:
         if self._as_loud_as_owner(self.detector.speech_levels[hold.level_mark:]) and self._is_owner(text, hold):  # the level again: a peak can pass alone
             self._talked_over(text, hold)
         elif self._hold_settled():
-            self.detector.reset()  # it wasn't a message, so the reply needn't wait for one to end
-            self._release_hold()
+            self._settle(hold)  # it wasn't a message, so the reply needn't wait for one to end
         else:
             hold.mark = self.detector.voiced
             hold.checking = False
 
+    def _settle(self, hold):
+        """The speech under this hold ended without being a message. Only a lone word can still count."""
+        if self._as_loud_as_owner(hold.levels) and self.detector.voiced * SECONDS <= LONE_WORD_SECONDS:
+            hold.checking = True
+            asyncio.ensure_future(self._check_word(hold))
+        else:
+            self.detector.reset()
+            self._release_hold()
+
+    async def _check_word(self, hold):
+        try:
+            text = await self._transcribe(np.concatenate(self.detector.audio))
+        except (RuntimeError, ValueError):
+            return  # the gateway is stopping
+        if hold is not self.hold:
+            return
+        if not self._hold_settled():
+            hold.checking = False  # they carried on, so it wasn't a lone word
+            return
+        self.detector.reset()
+        self._release_hold()
+        wanted = "resume" if self.paused else "pause"
+        if kind(text) == wanted and not self._repeats_played(spoken_words(text)[0], hold):
+            self._set_paused(not self.paused)
+
     def _is_owner(self, text, hold):
-        if kind(text) == "noise":
+        if kind(text) in ("noise", "pause"):  # a lone "pause" stops no turn, so it waits to see if more follows
             return False
         return len(words_of(text)) < ECHO_MIN_WORDS or not self._repeats_played(text, hold)
 
@@ -498,10 +558,12 @@ class Conversation:
         # Speech that ended inside the output delay may be the earbuds, so the phone should expect it that
         # loud. Speech that carried on past it, or was as loud as the owner, may be the owner, whose voice
         # mustn't deafen the phone's gate.
-        leak = hold.mark is None and hold.voiced_in_delay > 0 and not self._as_loud_as_owner(hold.levels)
+        leak = hold.mark is None and hold.voiced_in_delay > 0 and not self._as_loud_as_owner(hold.levels) \
+            and not self.paused  # that may be whoever the owner is talking to
         self.phone.send_control({"t": "resume", "id": hold.id, "leak": leak})
         if self.played_until > hold.at:  # what the phone kept back still has to play
             self.played_until += self.clock() - hold.at
+            self.state_notice_ends += self.clock() - hold.at
         self._log_hold("resumed", hold)
 
     def _log_hold(self, outcome, hold):
@@ -527,6 +589,10 @@ class Conversation:
         if self.hold:  # it ended without ever counting as the owner
             self._release_hold()
             return
+        if self.paused:
+            if what == "resume":
+                self._set_paused(False)
+            return
         if what == "noise":
             return
         if self.detector.finished_level is not None:
@@ -536,6 +602,9 @@ class Conversation:
         if what != "yes":
             self.readback = None
             self._drop_confirm()
+        if what == "pause":
+            self._set_paused(True)
+            return
         if what == "cancel":
             desk = self._chosen_session()
             self._interrupt(0)
@@ -570,6 +639,30 @@ class Conversation:
         order = self._send_order(session, "submit", text, unheard, over_a_reply)
         self.prompt_metrics[order] = metrics
         asyncio.get_running_loop().call_later(ORDER_WAIT_SECONDS, self._check_order, order)
+
+    def _set_paused(self, paused):
+        """Pausing and resuming are messages, so they leave nothing to say yes to."""
+        self.paused = paused
+        self.active_at = self.clock()
+        self.readback = None
+        self._drop_confirm()
+        self._save_paused()
+        self.say(PAUSED if paused else LISTENING)
+
+    def _save_paused(self):
+        if not self.pause_file:
+            return
+        try:
+            if self.paused:
+                os.close(os.open(self.pause_file, os.O_WRONLY | os.O_CREAT, 0o600))
+            elif os.path.exists(self.pause_file):
+                os.remove(self.pause_file)
+        except OSError:
+            log.exception("couldn't save whether listening is paused")
+
+    def _missed_start(self):
+        if not self.paused:  # the words wouldn't have counted anyway
+            self._tone("warn")
 
     def _report_waiting_prompts(self):
         """Every message gets its line in the log, even one whose turn never comes."""
@@ -815,8 +908,20 @@ class Conversation:
         """A reply's words come with the voice its turn began with. A notice uses the current one."""
         if text in NOTICE_NAMES:
             log.info("notice %s", NOTICE_NAMES[text])
-        self.say_queue.append((text, metrics, reply_voice, relayed))
+        unit = (text, metrics, reply_voice, relayed)
+        if is_state_notice(unit):
+            self._drop_unsent_state_notice()
+            self.state_notice, self.state_notice_ends = text, math.inf
+            self.say_queue.appendleft(unit)
+        else:
+            self.say_queue.append(unit)
         self.say_ready.set()
+
+    def _drop_unsent_state_notice(self):
+        self.frames = collections.deque(frame for frame in self.frames if not frame[5])
+        self.say_queue = collections.deque(unit for unit in self.say_queue if not is_state_notice(unit))
+        if self.synthesizing and is_state_notice(self.synthesizing):
+            self.synthesizing = None
 
     async def _speak_loop(self):
         """Synthesize ahead: the next sentence is made while the current one plays."""
@@ -829,7 +934,7 @@ class Conversation:
             unit = self.say_queue.popleft()
             text, metrics, reply_voice, relayed = unit
             if isinstance(text, Relayed):
-                self.frames.append((text, None, True, [], None))
+                self.frames.append((text, None, True, [], None, False))
                 self.frames_ready.set()
                 continue
             if metrics:
@@ -850,10 +955,14 @@ class Conversation:
             if metrics:
                 metrics.mark("first_audio_ready")
             words = words_of(text)
-            self.frames.extend(
-                (packet, metrics, reply_voice is not None,
-                 words[i * len(words) // len(packets):(i + 1) * len(words) // len(packets)], relayed)
-                for i, packet in enumerate(packets))
+            state_notice = is_state_notice(unit)
+            made = [(packet, metrics, reply_voice is not None,
+                     words[i * len(words) // len(packets):(i + 1) * len(words) // len(packets)], relayed, state_notice)
+                    for i, packet in enumerate(packets)]
+            if state_notice:
+                self.frames.extendleft(reversed(made))
+            else:
+                self.frames.extend(made)
             self.frames_ready.set()
 
     def _synthesize(self, text, voice):
@@ -917,10 +1026,12 @@ class Conversation:
                     if self.frames[0][2] != self.reply_heard and now < self.played_until + OUTPUT_DELAY_SECONDS:
                         break  # a reply and a notice never sound together, so one cut can't take the other
                     self.played_until = max(self.played_until, now)
-                    packet, metrics, is_reply, words, relayed = self.frames.popleft()
+                    packet, metrics, is_reply, words, relayed, state_notice = self.frames.popleft()
                     self.phone.send_speech(self.gen, packet)
                     self.sounding_relay = relayed
                     self.played_until += FRAME_SECONDS
+                    if state_notice and not (self.frames and self.frames[0][5]):
+                        self.state_notice_ends = self.played_until
                     self.played_words.extend((self.played_until, word) for word in words)
                     self.reply_heard = is_reply
                     if metrics and "first_audio_sent" not in metrics.times:

@@ -10,7 +10,7 @@ You leave the desk with Firstmate halfway through a batch of work. Earbuds in, a
 
 On the way out, you open Walkie Talkie, choose your Firstmate session, tap **Start**, and touch the fingerprint sensor. You hear "Connected to" and the session's name. You lock the phone and walk.
 
-Then you just talk. "What's everyone working on?" When you stop, your words go through, and Firstmate's answer plays in your earbuds. "Tell the README task to lead with the use case." If Firstmate is still busy, you hear "It's in the queue," and your message runs after the current turn. Talk over a reply to cut it short, as in a phone call, or tap an earbud. Either one stops the turn.
+Then you just talk. "What's everyone working on?" When you stop, your words go through, and Firstmate's answer plays in your earbuds. "Tell the README task to lead with the use case." If Firstmate is still busy, you hear "It's in the queue," and your message runs after the current turn. Talk over a reply to cut it short, as in a phone call, or tap an earbud. Either one stops the turn. If you stop to chat with someone, say "pause", and "go" when you're done.
 
 If you've set up a front desk, you can talk to it while Firstmate is deep in a long turn. It answers from Firstmate's status and files everything else for Firstmate to pick up. When Firstmate wants to merge, it reads the exact action back, and you hear it word for word. You say "yes", take out the phone, and confirm with your fingerprint. A voice alone confirms nothing there.
 
@@ -106,7 +106,7 @@ To talk to a session, someone needs all of these at once: a device on your tailn
 What this can't stop:
 
 - **Spoken words have your keyboard's authority.** Within a call, the session does whatever it would do for a typed prompt, tools included.
-- **The mic is always live, with no wake word.** It can't tell who's speaking, so anyone close enough can become a prompt. Stop the app when you talk to someone else.
+- **The mic is always live, with no wake word.** It can't tell who's speaking, so anyone close enough can become a prompt. Say "pause", or stop the app, when you talk to someone else.
 - **A spoken yes to a session is not a lock.** A session asked to confirm follows a rule, not a check. The fingerprint confirmation at a front desk is a check.
 - **A thief who takes the phone during a call** can talk to that one session until the call ends. They can't start another call without your fingerprint.
 - **Processes running as you on the Mac** can reach the gateway's private folder and talk to a session. Such a process can already type into your terminals.
