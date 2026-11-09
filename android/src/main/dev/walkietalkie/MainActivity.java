@@ -421,7 +421,7 @@ public class MainActivity extends Activity {
         renderSessions(status);
         renderVoices(status);
         show(details, status.running ? detailsText(status)
-                : "Plug in the mic's USB receiver and connect the earbuds before you start.");
+                : "Connect your USB mic and your headphones before you start.");
     }
 
     /** Changes the text only when it changed, so an idle screen does no drawing. */
