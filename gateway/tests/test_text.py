@@ -13,6 +13,7 @@ from walkie_gateway.text import (
     kind,
     sanitize_prompt,
     spell_numbers,
+    switch_target,
     trails_off,
 )
 
@@ -161,6 +162,19 @@ class SpeechFilterTest(unittest.TestCase):
 
 
 class UtteranceTest(unittest.TestCase):
+    def test_a_switch_names_its_session_run_together(self):
+        self.assertEqual(switch_target("Switch to first mate personal."), "firstmatepersonal")
+        self.assertEqual(switch_target("Um, switch to walkie-talkie"), "walkietalkie")
+        self.assertEqual(switch_target("Switch session."), "")
+        self.assertEqual(switch_target("switch sessions"), "")
+        self.assertEqual(switch_target("Swit session."), "")  # as the transcriber often hears it
+
+    def test_anything_else_is_no_switch(self):
+        self.assertIsNone(switch_target("Switch to."))
+        self.assertIsNone(switch_target("Should we switch to the main branch?"))
+        self.assertIsNone(switch_target("Switch the session's model to Haiku."))
+        self.assertIsNone(switch_target("What's the status?"))
+
     def test_kinds(self):
         self.assertEqual(kind("um"), "noise")
         self.assertEqual(kind("a"), "noise")

@@ -263,6 +263,13 @@ class ModLinkTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.conversation.changes, before + 2)
         self.assertEqual((self.link.sessions["123"].nonce, self.link.sessions["123"].prompted_at), ("two", 5))
 
+    async def test_a_session_is_spoken_of_by_its_folder_then_its_login_unless_the_default(self):
+        session = modlink.Session("1")
+        session.cwd = "/work/firstmate/"
+        for login, name in (("default", "firstmate"), ("", "firstmate"), ("personal", "firstmate personal")):
+            session.login = login
+            self.assertEqual(session.name, name, login)
+
     async def test_an_event_leaves_the_challenge_alone(self):
         modlink.POLL_HOLD = 0.01
         await post(self.path, "/next", {**SESSION, "nonce": "one"})
