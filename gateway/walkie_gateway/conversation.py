@@ -1135,6 +1135,8 @@ class Conversation:
                         if packet.takes_yes and not self._queued_relays():
                             packet.expires = self.played_until + READBACK_SECONDS
                             self.readback = packet
+                            if self.confirming and isinstance(self.confirming[1], Switch):
+                                self._drop_confirm()  # the newest question owns the yes
                         else:
                             self.readback = None
                         continue

@@ -751,10 +751,13 @@ class ConversationTest(unittest.IsolatedAsyncioTestCase):
         work, other = self.two_logins()
         work.cwd, work.login = "/Users/me/proj/main", "default"
         other.cwd, other.login = "/Users/me/proj/feature-x", "default"
-        for said in ("Switch to main.", "Switch to main, then pull."):
-            self.finish_turn(said)
-            self.assertEqual(self.order()["submit"], said)
-            self.assertIsNone(self.conversation.confirming)
+        self.finish_turn("Switch to main.")
+        self.assertEqual(self.order()["submit"], "Switch to main.")
+        self.assertIsNone(self.conversation.confirming)
+        self.assertEqual(len(other.orders), 0)
+        self.choose("8")  # on the other session, main is another session's whole name, so it's a switch
+        self.finish_turn("Switch to main.")
+        self.assertEqual(self.asked_switch()["switch"]["id"], "7")
         self.assertEqual(len(other.orders), 0)
 
     async def test_with_more_than_one_other_session_a_bare_switch_asks_which(self):
@@ -836,6 +839,24 @@ class ConversationTest(unittest.IsolatedAsyncioTestCase):
                 self.conversation.phone_message({"t": "confirmed", "nonce": asked["nonce"], "sig": "good"})
                 self.assertEqual(self.conversation.chosen, "7")
                 self.assertEqual(len(personal.orders), 0)
+
+    async def test_a_front_desk_reply_that_asks_for_a_yes_after_a_switch_notice_takes_the_yes(self):
+        work, personal = self.two_logins()
+        work.front_desk = True
+        self.finish_turn("Switch session.")
+        self.relay("note-1", "Say yes to merge the release branch.")
+        await self.past_the_gap()
+        self.assertEqual(self.asked_switch(), {"t": "confirm", "nonce": None})  # the newer question withdrew the switch
+        self.finish_turn("Yes.")
+        self.assertEqual(self.asked_switch()["text"], "Say yes to merge the release branch.")
+        self.assertNotIn("switch", self.asked_switch())
+        await self.by_then(lambda: module.CONFIRM_IN_APP in self.phone.said())
+        self.assertNotIn(module.NOT_SWITCHED % "firstmate", self.phone.said())
+        self.assertIn(module.CONFIRM_IN_APP, self.phone.said())
+        self.confirm_in_app()
+        self.assertEqual(self.order_for("confirm")["confirm"]["note"], "note-1")
+        self.assertEqual(self.conversation.chosen, "7")
+        self.assertEqual(len(personal.orders), 0)
 
     async def test_a_fingerprint_for_a_switch_that_a_later_one_replaced_moves_nothing_and_says_so(self):
         self.two_logins()

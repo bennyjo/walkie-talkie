@@ -45,11 +45,12 @@ Like Start, a switch takes your fingerprint, and the fingerprint signs that one 
 | **switch session** with no other session | You hear that there's no other session to switch to |
 | **switch to** and a name that matches no other session's whole name, such as "switch to the main branch", "switch to personal", or "switch to main" on a session in a folder called main | It's not a switch. Your words go to the session as an ordinary prompt |
 | **yes** or **no** before the fingerprint | The switch is withdrawn, and you hear "Not switched". The word doesn't reach the session you're on |
-| Anything else before the fingerprint, or tap an earbud | The switch is withdrawn, and nothing moves |
+| Anything else before the fingerprint, or tap an earbud | The switch is withdrawn, and nothing moves. Your words, even "yeah" or "okay", go to the session you're on |
+| A front desk's reply that asks for a yes plays before the fingerprint | The switch is withdrawn, so your next **yes** answers the reply |
 
 The transcriber often hears "switch session" as "swit session", so that counts too. It can also mishear a name, especially a made-up word such as "firstmate", and then your words go to the session you're on as an ordinary prompt. With two sessions, **switch session** is the dependable way to switch.
 
-The request in the app waits 2 minutes, then goes. If you tap **Not now**, the signature fails, you use your fingerprint on a switch that a later one replaced, or the other session changed in the meantime, you hear "Not switched" and the name of the session you're still talking to.
+The request in the app waits 2 minutes, then goes. If you tap **Not now**, the signature fails, or the other session changed in the meantime, you hear "Not switched" and the name of the session you're still talking to.
 
 ## Pause listening
 
