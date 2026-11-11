@@ -152,6 +152,12 @@ class ConversationTest(unittest.IsolatedAsyncioTestCase):
     async def settle(self, seconds=0.3):
         await asyncio.sleep(seconds)
 
+    async def by_then(self, done, seconds=5):
+        """Waits until done() holds, or the deadline passes: speech is paced in real time, so a busy machine is slower."""
+        deadline = asyncio.get_running_loop().time() + seconds
+        while not done() and asyncio.get_running_loop().time() < deadline:
+            await asyncio.sleep(0.05)
+
     async def past_the_gap(self):
         """A notice and a reply keep the output delay between them, so one cut can't take the other."""
         await self.settle(module.OUTPUT_DELAY_SECONDS + 0.4)
@@ -472,11 +478,9 @@ class ConversationTest(unittest.IsolatedAsyncioTestCase):
         await self.settle()
         self.assertEqual(self.phone.said(), ["The build passed."])
         self.answer(self.order_for("submit"), "Two workers are running.")
-        await self.settle()
-        self.assertEqual(self.phone.said(), [
-            "The build passed.", "Two workers are running.", "The deploy failed.",
-            "Say yes to merge the release branch.",
-        ])
+        expected = ["The build passed.", "Two workers are running.", "The deploy failed.", "Say yes to merge the release branch."]
+        await self.by_then(lambda: self.conversation.readback is not None)  # once the read-back's words have gone out
+        self.assertEqual(self.phone.said(), expected)
         self.assertEqual(self.conversation.readback.note, "note-3")
 
     async def test_a_tap_during_the_response_keeps_the_replies_waiting(self):
