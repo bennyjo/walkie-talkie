@@ -141,7 +141,6 @@ NOT_FILED = "I can't tell whether that was filed."  # the command may have saved
 # These name sessions, so the log names the notice and never its words.
 SWITCH_IN_APP = "To switch to %s, open the app and use your fingerprint."
 SWITCH_WHICH = "Which session? Say switch to, and one of these: %s."
-ALREADY_ON = "You're already talking to %s."
 NOT_SWITCHED = "Not switched. You're still talking to %s."
 NO_OTHER_SESSION = "There's no other session to switch to."
 
@@ -631,7 +630,8 @@ class Conversation:
             self.owner_level = self.detector.finished_level
         self.active_at = self.clock()
         readback, confirming = self.readback, self.confirming
-        if what != "yes":
+        switching = confirming and isinstance(confirming[1], Switch)
+        if what != "yes" or switching:
             self.readback = None
             self._drop_confirm()
         if what == "pause":
@@ -641,6 +641,10 @@ class Conversation:
             desk = self._chosen_session()
             self._interrupt(0)
             self.say(DESK_CANCELLED if desk and desk.front_desk else CANCELLED)  # a desk can't call back what it has filed
+            self._release_relays()
+            return
+        if switching and what in ("yes", "no"):  # an answer to the switch, which only the fingerprint gives
+            self._not_switched()
             self._release_relays()
             return
         session = self._chosen_session()
@@ -733,6 +737,7 @@ class Conversation:
         """A spoken switch. It asks the app for a fingerprint over the session it names, so a voice alone opens nothing.
 
         A name that matches no session isn't a switch, so "switch to the main branch" goes to the session as a prompt.
+        Nor is the name of the session you're on, so "switch to main" still reaches a session in a folder called main.
         """
         listed = [s for s in self.modlink.sessions.values() if s.nonce]
         if target:
@@ -741,8 +746,7 @@ class Conversation:
                 return False
             matches = [s for s in matches if s is not session]
             if not matches:
-                self._notice("already-on", ALREADY_ON % session.name)
-                return True
+                return False
         else:
             matches = [s for s in listed if s is not session]
             if not matches:
@@ -784,6 +788,8 @@ class Conversation:
         """A fingerprint in the app, over the words the owner heard. Only now does the yes go to the session."""
         confirming = self.confirming
         if not confirming or nonce != confirming[0]:
+            if confirming and isinstance(confirming[1], Switch):  # a fingerprint for a switch the latest one replaced
+                self._not_switched()
             return
         self._drop_confirm()
         if isinstance(confirming[1], Switch):
@@ -1129,6 +1135,8 @@ class Conversation:
                         if packet.takes_yes and not self._queued_relays():
                             packet.expires = self.played_until + READBACK_SECONDS
                             self.readback = packet
+                            if self.confirming and isinstance(self.confirming[1], Switch):
+                                self._drop_confirm()  # the newest question owns the yes
                         else:
                             self.readback = None
                         continue

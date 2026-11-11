@@ -43,9 +43,10 @@ Like Start, a switch takes your fingerprint, and the fingerprint signs that one 
 | --- | --- |
 | **switch session** with more than one other session | You hear "Which session?" and their names. Say **switch to** and one of them |
 | **switch session** with no other session | You hear that there's no other session to switch to |
-| **switch to** and the session you're talking to | You hear that you're already talking to it |
-| **switch to** and a name that matches no session's whole name, such as "switch to the main branch" or "switch to personal" | It's not a switch. Your words go to the session as an ordinary prompt |
-| Anything else before the fingerprint, or tap an earbud | The switch is withdrawn, and nothing moves |
+| **switch to** and a name that matches no other session's whole name, such as "switch to the main branch", "switch to personal", or "switch to main" on a session in a folder called main | It's not a switch. Your words go to the session as an ordinary prompt |
+| **yes** or **no** before the fingerprint | The switch is withdrawn, and you hear "Not switched". The word doesn't reach the session you're on |
+| Anything else before the fingerprint, or tap an earbud | The switch is withdrawn, and nothing moves. Your words, even "yeah" or "okay", go to the session you're on |
+| A front desk's reply that asks for a yes plays before the fingerprint | The switch is withdrawn, so your next **yes** answers the reply |
 
 The transcriber often hears "switch session" as "swit session", so that counts too. It can also mishear a name, especially a made-up word such as "firstmate", and then your words go to the session you're on as an ordinary prompt. With two sessions, **switch session** is the dependable way to switch.
 
@@ -133,7 +134,7 @@ Pick a voice under **Voice** in the app, once you've tapped **Start**. All 11 co
 | No sessions in the app | No session has the mod running. Type `/reload-plugins` in a session that started before the install. If it says `0 plugins`, run the install for that session's login. A session in a denied folder, on a login the install didn't name, or in an orchestrated worker never shows. `0 hooks` in that line is normal |
 | The fingerprint prompt says the key has gone | A fingerprint was added to the phone, or the pairing is over 30 days old. Tap **Pair again** |
 | The app says "That session changed a moment ago" | Its list was a moment out of date. Tap **Start** again |
-| "Which session?" names the same session twice | Two sessions are in folders of the same name on one login, so their spoken names match. Switch with **switch session** if they're the only two, or tap **Stop** and choose in the app by where the folder is |
+| "Which session?" names the same session twice | Two sessions are in folders of the same name, so their spoken names match. They're on one login, or one is on a login whose path holds a denied name, so its login goes unnamed. Switch with **switch session** if they're the only two, or tap **Stop** and choose in the app by where the folder is |
 | **front-desk** isn't in the app's list | The launcher isn't running, it ran in a stripped environment, such as `env -i`, where Claude Code doesn't load mods, or its `CLAUDE_CONFIG_DIR` isn't a login you installed for. Start it from your usual shell |
 | `A front desk is already running` | Another launcher holds this state folder. Stop that one first |
 | "Connect your USB mic" | The input route isn't USB. With Advanced Protection on, connect the mic before you lock the phone |
