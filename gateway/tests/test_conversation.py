@@ -152,6 +152,12 @@ class ConversationTest(unittest.IsolatedAsyncioTestCase):
     async def settle(self, seconds=0.3):
         await asyncio.sleep(seconds)
 
+    async def by_then(self, done, seconds=5):
+        """Waits until done() holds, or the deadline passes: speech is paced in real time, so a busy machine is slower."""
+        deadline = asyncio.get_running_loop().time() + seconds
+        while not done() and asyncio.get_running_loop().time() < deadline:
+            await asyncio.sleep(0.05)
+
     async def past_the_gap(self):
         """A notice and a reply keep the output delay between them, so one cut can't take the other."""
         await self.settle(module.OUTPUT_DELAY_SECONDS + 0.4)
@@ -472,11 +478,9 @@ class ConversationTest(unittest.IsolatedAsyncioTestCase):
         await self.settle()
         self.assertEqual(self.phone.said(), ["The build passed."])
         self.answer(self.order_for("submit"), "Two workers are running.")
-        await self.settle()
-        self.assertEqual(self.phone.said(), [
-            "The build passed.", "Two workers are running.", "The deploy failed.",
-            "Say yes to merge the release branch.",
-        ])
+        expected = ["The build passed.", "Two workers are running.", "The deploy failed.", "Say yes to merge the release branch."]
+        await self.by_then(lambda: self.conversation.readback is not None)  # once the read-back's words have gone out
+        self.assertEqual(self.phone.said(), expected)
         self.assertEqual(self.conversation.readback.note, "note-3")
 
     async def test_a_tap_during_the_response_keeps_the_replies_waiting(self):
@@ -671,6 +675,160 @@ class ConversationTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_another_prompt_withdraws_the_app_confirmation(self):
         await self.withdrawn_by(lambda: self.finish_turn("What's the status?"))
+
+    # --- switching sessions by voice -----------------------------------------------
+
+    def two_logins(self):
+        """The owner's two sessions: Firstmate on the work login, and one in a folder of the same name on the personal one."""
+        work, personal = self.link.sessions["7"], self.link.sessions["8"]
+        work.cwd, work.login = "/Users/me/Code/firstmate", "default"
+        personal.cwd, personal.login = "/Users/me/home/firstmate", "personal"
+        self.choose("7")
+        return work, personal
+
+    def asked_switch(self):
+        return [c for c in self.phone.controls if c["t"] == "confirm"][-1]
+
+    async def test_a_spoken_switch_asks_the_app_for_a_fingerprint_and_moves_nothing_yet(self):
+        _, personal = self.two_logins()
+        self.finish_turn("Switch session.")
+        await self.settle()
+        asked = self.asked_switch()
+        self.assertEqual(asked["switch"], {"id": "8", "modNonce": "nonce-8"})
+        self.assertEqual(asked["text"], "Switch to firstmate personal?")
+        self.assertEqual(self.phone.said(), [module.SWITCH_IN_APP % "firstmate personal"])
+        self.assertEqual(self.conversation.chosen, "7")
+        self.assertEqual(len(self.session.orders), 0)
+        self.assertEqual(len(personal.orders), 0)
+
+    async def test_the_fingerprint_signs_the_named_session_as_at_start_and_the_switch_says_where_you_are(self):
+        work, personal = self.two_logins()
+        self.finish_turn("Switch session.")
+        nonce = self.asked_switch()["nonce"]
+        self.confirm_in_app()
+        self.assertEqual(self.asked_switch(), {"t": "confirm", "nonce": None})  # the app stops asking
+        self.assertEqual(self.phone.last_signed, module.security.start_message(nonce, "run-1", "8", "nonce-8"))
+        self.assertEqual(self.conversation.chosen, "8")
+        self.assertEqual(personal.orders.popleft(),
+                         {"grant": {"session": "8", "modNonce": "nonce-8", "nonce": nonce, "run": "run-1", "sig": "good"}})
+        self.assertIsNone(self.conversation.chosen_run(work))
+        self.assertEqual(self.conversation.chosen_run(personal), "run-1")
+        await self.settle()
+        self.assertEqual(self.phone.said()[-1], "Connected to firstmate personal.")
+
+    async def test_prompts_after_a_switch_go_to_the_new_session(self):
+        work, personal = self.two_logins()
+        self.finish_turn("Switch to first mate personal.")
+        self.confirm_in_app()
+        personal.orders.clear()
+        self.finish_turn("What's the status?")
+        self.assertEqual(personal.orders.popleft()["submit"], "What's the status?")
+        self.assertEqual(len(work.orders), 0)
+
+    async def test_a_switch_finds_a_session_by_its_whole_name_only(self):
+        self.two_logins()
+        self.finish_turn("Switch to first mate personal.")
+        self.assertEqual(self.asked_switch()["switch"]["id"], "8")
+        self.choose("8")
+        self.finish_turn("Switch to first mate.")
+        self.assertEqual(self.asked_switch()["switch"]["id"], "7")
+
+    async def test_a_folder_or_login_alone_is_an_ordinary_prompt(self):
+        self.two_logins()
+        for said in ("Switch to personal.", "Switch to personal first mate."):
+            self.finish_turn(said)
+            self.assertEqual(self.order()["submit"], said)
+            self.assertIsNone(self.conversation.confirming)
+
+    async def test_a_name_that_matches_no_session_is_an_ordinary_prompt(self):
+        self.two_logins()
+        self.finish_turn("Switch to the main branch.")
+        self.assertEqual(self.order()["submit"], "Switch to the main branch.")
+        self.assertIsNone(self.conversation.confirming)
+
+    async def test_naming_the_session_you_are_on_says_so(self):
+        self.two_logins()
+        self.finish_turn("Switch to first mate.")
+        await self.settle()
+        self.assertEqual(self.phone.said(), [module.ALREADY_ON % "firstmate"])
+        self.assertIsNone(self.conversation.confirming)
+        self.assertEqual(len(self.session.orders), 0)
+
+    async def test_with_more_than_one_other_session_a_bare_switch_asks_which(self):
+        self.two_logins()
+        third = self.link.sessions["9"] = Session("9")
+        third.cwd, third.nonce = "/work/walkie-talkie", "nonce-9"
+        self.finish_turn("Switch session.")
+        await self.settle()
+        self.assertEqual(self.phone.said(), [module.SWITCH_WHICH % "firstmate personal, walkie-talkie"])
+        self.assertIsNone(self.conversation.confirming)
+
+    async def test_with_no_other_session_a_switch_says_so(self):
+        del self.link.sessions["8"]
+        self.choose("7")
+        self.finish_turn("Switch session.")
+        await self.settle()
+        self.assertEqual(self.phone.said(), [module.NO_OTHER_SESSION])
+        self.assertIsNone(self.conversation.confirming)
+
+    async def not_switched(self):
+        await self.settle()
+        self.assertEqual(self.conversation.chosen, "7")
+        self.assertEqual(len(self.link.sessions["8"].orders), 0)
+        self.assertEqual(self.phone.said()[-1], module.NOT_SWITCHED % "firstmate")
+
+    async def test_a_bad_signature_switches_nothing(self):
+        self.two_logins()
+        self.finish_turn("Switch session.")
+        self.confirm_in_app(sig="forged")
+        await self.not_switched()
+        self.confirm_in_app()  # and it can't be tried again
+        self.assertEqual(self.conversation.chosen, "7")
+
+    async def test_declining_in_the_app_switches_nothing(self):
+        self.two_logins()
+        self.finish_turn("Switch session.")
+        self.conversation.phone_message({"t": "declined", "nonce": self.asked_switch()["nonce"]})
+        await self.not_switched()
+
+    async def test_a_late_fingerprint_switches_nothing(self):
+        self.two_logins()
+        self.finish_turn("Switch session.")
+        nonce, switch, _ = self.conversation.confirming
+        self.conversation.confirming = (nonce, switch, self.conversation.clock() - 1)
+        self.confirm_in_app()
+        await self.not_switched()
+
+    async def test_a_session_whose_challenge_moved_on_since_the_switch_is_not_chosen(self):
+        _, personal = self.two_logins()
+        self.finish_turn("Switch session.")
+        personal.nonce = "nonce-8-new"
+        self.confirm_in_app()
+        await self.not_switched()
+
+    async def test_a_tap_or_another_prompt_withdraws_a_switch(self):
+        self.two_logins()
+        for cut in (lambda: self.conversation.phone_message({"t": "tap", "gen": 0}),
+                    lambda: self.finish_turn("What's the status?")):
+            self.finish_turn("Switch session.")
+            asked = self.asked_switch()
+            cut()
+            self.assertEqual(self.asked_switch(), {"t": "confirm", "nonce": None})
+            self.conversation.phone_message({"t": "confirmed", "nonce": asked["nonce"], "sig": "good"})
+            self.assertEqual(self.conversation.chosen, "7")
+
+    async def test_a_switch_lets_the_session_before_go_as_stop_does(self):
+        work, _ = self.two_logins()
+        self.finish_turn("Write the release notes.")
+        self.event(kind="order", id=self.order()["id"], accepted=True, busy=True)
+        self.finish_turn("Switch session.")
+        self.confirm_in_app()
+        self.assertEqual(self.conversation.chosen, "8")
+        await self.settle()
+        self.assertIn(module.QUEUE_DROPPED, self.phone.said())
+        self.event(kind="text", turnId="t1", text="Anything from the old session.")
+        await self.settle()
+        self.assertNotIn("Anything from the old session.", self.phone.said())
 
     # --- a run, from a fingerprint to its end --------------------------------------
 

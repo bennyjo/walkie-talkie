@@ -40,13 +40,15 @@ import org.json.JSONObject;
 
 /**
  * One screen: pair with the Mac, choose a session, and tap Start. Start asks for a fingerprint, every
- * time, and the fingerprint signs that one session for that one run. A read-back that needs a yes is
- * confirmed here with a fingerprint too. Like a banking app, the screen can't be captured.
+ * time, and the fingerprint signs that one session for that one run. A read-back that needs a yes, and
+ * a spoken switch to another session, are confirmed here with a fingerprint too. Like a banking app, the
+ * screen can't be captured.
  */
 public class MainActivity extends Activity {
     private static final long REFRESH_MS = 500;
     private static final int BRAND_GREEN = 0xFF1F6F5C; // white text stays readable on it, day and night
     private static final int WARN_DAYS = 3;
+    private static final String CONNECT_WHY = "Your fingerprint lets this phone talk to that session until you stop.";
 
     private final Handler main = new Handler(Looper.getMainLooper());
     private LinearLayout pairSection;
@@ -298,7 +300,7 @@ public class MainActivity extends Activity {
         String name = rowName(session);
         String run = GatewayLink.newRun();
         String signed = GatewayLink.startMessage(nonce, run, session.optString("id"), session.optString("nonce"));
-        fingerprint("Connect to " + name + "?", "Your fingerprint lets this phone talk to that session until you stop.", signed, signature -> {
+        fingerprint("Connect to " + name + "?", CONNECT_WHY, signed, signature -> {
             try {
                 JSONObject approve = new JSONObject()
                         .put("session", session.optString("id"))
@@ -319,13 +321,23 @@ public class MainActivity extends Activity {
         if (confirm == null) return;
         String nonce = confirm.optString("nonce");
         String text = confirm.optString("text");
+        JSONObject target = confirm.optJSONObject("switch");
+        String run = TalkService.status.run;
         String signed;
-        try {
-            signed = GatewayLink.confirmMessage(nonce, text);
-        } catch (GeneralSecurityException e) {
-            return;
+        if (target != null) {
+            // A spoken switch: the fingerprint signs the other session for this run, exactly as Start does.
+            if (run == null) return;
+            signed = GatewayLink.startMessage(nonce, run, target.optString("id"), target.optString("modNonce"));
+        } else {
+            try {
+                signed = GatewayLink.confirmMessage(nonce, text);
+            } catch (GeneralSecurityException e) {
+                return;
+            }
         }
-        fingerprint("Confirm", text, signed, signature -> startService(new Intent(this, TalkService.class)
+        String title = target != null ? text : "Confirm";
+        String description = target != null ? CONNECT_WHY : text;
+        fingerprint(title, description, signed, signature -> startService(new Intent(this, TalkService.class)
                 .setAction(TalkService.ACTION_CONFIRMED)
                 .putExtra(TalkService.EXTRA_NONCE, nonce)
                 .putExtra(TalkService.EXTRA_SIG, signature)));
@@ -458,7 +470,7 @@ public class MainActivity extends Activity {
         sessionsGroup.removeAllViews();
         if (status.running) {
             sessionsHint.setVisibility(View.VISIBLE);
-            sessionsHint.setText(withQuietLine(status.session, "To talk to another session, tap Stop."));
+            sessionsHint.setText(withQuietLine(status.session, "To talk to another session, say switch session, or tap Stop."));
             return;
         }
         JSONArray list = sessions == null ? null : sessions.optJSONArray("list");
@@ -522,7 +534,7 @@ public class MainActivity extends Activity {
         }
     }
 
-    private static String rowName(JSONObject session) {
+    static String rowName(JSONObject session) {
         return session.optString("name") + "  " + session.optString("session");
     }
 

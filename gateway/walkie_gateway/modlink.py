@@ -51,6 +51,12 @@ class Session:
         self.prompted_at = 0        # when it last took a prompt, in ms since the epoch, 0 if never
         self.login = ""             # a short name for its login, such as "default" or "personal"
 
+    @property
+    def name(self):
+        """What you hear and say for it: the folder, then the login unless it's the default, as "firstmate personal"."""
+        folder = os.path.basename(self.cwd.rstrip("/")) or self.cwd
+        return " ".join(part for part in (folder, "" if self.login == "default" else self.login) if part)
+
     def describe(self, now_ms, home=None):
         """What the phone shows. Two sessions in folders of the same name differ by where, and one folder open
         on two logins differs by login. The mod sends only a folder it may name, so its parents may be named too."""

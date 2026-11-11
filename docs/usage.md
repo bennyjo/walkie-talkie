@@ -1,15 +1,15 @@
 # Use Walkie Talkie
 
-This page covers a call from Start to Stop, pausing, how the gateway decides a message has ended, the timing log, and troubleshooting.
+This page covers a call from Start to Stop, switching sessions by voice, pausing, how the gateway decides a message has ended, the timing log, and troubleshooting.
 
 ## Start a call
 
 1. Plug in the receiver, and connect the earbuds.
-1. Open the app. It lists the live sessions, the one with the latest prompt first. Each row shows the folder's name and a short ID, and under them where the folder is, the login, and when the session last took a prompt. So two copies of one repository, or one folder open on two logins, look different. Choose one.
+1. Open the app. It lists the live sessions, the one with the latest prompt first. Each row shows the folder's name and a short ID, and under them where the folder is, the login, and when the session last took a prompt. So two copies of one repository, or one folder open on two logins, look different. Choose one. When you talk, a session goes by its folder's name, then its login unless that's the default, such as "firstmate personal".
 1. Tap **Start**, allow the microphone and notifications the first time, and touch the fingerprint sensor. The prompt names the session you chose. You hear "Connected to" and its name.
 1. Lock the phone, and talk.
 
-Every Start takes a fingerprint, and the fingerprint lets the phone talk to that one session for that one call. To talk to another session, tap **Stop**, choose it, and tap **Start**.
+Every Start takes a fingerprint, and the fingerprint lets the phone talk to that one session for that one call. To talk to another session, [switch by voice](#switch-sessions-by-voice), or tap **Stop**, choose it, and tap **Start**.
 
 | You | What happens |
 | --- | --- |
@@ -28,6 +28,28 @@ Every Start takes a fingerprint, and the fingerprint lets the phone talk to that
 | Hear "hasn't started that" | The session has your message, but hasn't started it after 10 seconds. A dialog may be open at the keyboard. It runs when the dialog closes, unless you tap or stop the app |
 | Hear "stopped at the keyboard" | Someone pressed Esc in that session, so it refuses spoken prompts. Say **type it** within 30 seconds to send that message through the session's own prompt box. Over the notice, a lone "type it" is too short to count, so say "yes, type that", or wait for the notice to end. Messages queued after it are dropped, and you hear that they were. This works only in herdr or tmux. In a plain terminal, you hear that it can't reach the terminal |
 | Hear "asking for a permission" | The session needs an answer at the keyboard. Tap to stop the turn |
+
+## Switch sessions by voice
+
+You can move the call to another session without stopping it. The mod must run in that session too, so it's in the app's list. Sessions on different logins work the same way, so you can switch between a session on your work login and one on your personal login.
+
+1. Say **switch session** to go to the only other session, or **switch to** and the session's name, such as "switch to firstmate personal".
+1. You hear "To switch to" and the session's name, and a notification says something is waiting for your fingerprint. Open the app: it asks "Switch to" and the name. Tap **Confirm** and touch the sensor, or tap **Not now**.
+1. You hear "Connected to" and the name of the session you're now talking to.
+
+Like Start, a switch takes your fingerprint, and the fingerprint signs that one session. A spoken switch alone moves nothing. The session you leave is let go as at **Stop**: messages still in its queue are dropped, and you hear that they were. A turn already running there carries on, and nobody hears its reply.
+
+| You say | What happens |
+| --- | --- |
+| **switch session** with more than one other session | You hear "Which session?" and their names. Say **switch to** and one of them |
+| **switch session** with no other session | You hear that there's no other session to switch to |
+| **switch to** and the session you're talking to | You hear that you're already talking to it |
+| **switch to** and a name that matches no session's whole name, such as "switch to the main branch" or "switch to personal" | It's not a switch. Your words go to the session as an ordinary prompt |
+| Anything else before the fingerprint, or tap an earbud | The switch is withdrawn, and nothing moves |
+
+The transcriber often hears "switch session" as "swit session", so that counts too. It can also mishear a name, especially a made-up word such as "firstmate", and then your words go to the session you're on as an ordinary prompt. With two sessions, **switch session** is the dependable way to switch.
+
+The request in the app waits 2 minutes, then goes. If you tap **Not now**, the signature fails, or the other session changed in the meantime, you hear "Not switched" and the name of the session you're still talking to.
 
 ## Pause listening
 
@@ -111,6 +133,7 @@ Pick a voice under **Voice** in the app, once you've tapped **Start**. All 11 co
 | No sessions in the app | No session has the mod running. Type `/reload-plugins` in a session that started before the install. If it says `0 plugins`, run the install for that session's login. A session in a denied folder, on a login the install didn't name, or in an orchestrated worker never shows. `0 hooks` in that line is normal |
 | The fingerprint prompt says the key has gone | A fingerprint was added to the phone, or the pairing is over 30 days old. Tap **Pair again** |
 | The app says "That session changed a moment ago" | Its list was a moment out of date. Tap **Start** again |
+| "Which session?" names the same session twice | Two sessions are in folders of the same name on one login, so their spoken names match. Switch with **switch session** if they're the only two, or tap **Stop** and choose in the app by where the folder is |
 | **front-desk** isn't in the app's list | The launcher isn't running, it ran in a stripped environment, such as `env -i`, where Claude Code doesn't load mods, or its `CLAUDE_CONFIG_DIR` isn't a login you installed for. Start it from your usual shell |
 | `A front desk is already running` | Another launcher holds this state folder. Stop that one first |
 | "Connect your USB mic" | The input route isn't USB. With Advanced Protection on, connect the mic before you lock the phone |

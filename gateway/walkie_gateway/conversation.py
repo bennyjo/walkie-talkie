@@ -57,6 +57,12 @@ running out.
 
 Of those replies, a tap cuts only the one playing. It means you're about to talk, so
 every later reply waits in memory and plays after the response to your next message.
+
+Saying "switch session", or "switch to" and a session's name, asks the app for a
+fingerprint over that session, exactly as Start does, within the same run. Only once
+the signature checks out does the other session take the grant, and the one before is
+let go as at Stop. A spoken switch alone moves nothing, and a name that matches no
+session goes through as an ordinary prompt.
 """
 import asyncio
 import collections
@@ -73,7 +79,7 @@ import numpy as np
 
 from . import security
 from .speech import DEFAULT_VOICE, VOICES
-from .text import LEFT_OUT, SpeechFilter, kind, sanitize_prompt, spoken_words, words_of
+from .text import LEFT_OUT, SpeechFilter, compact, kind, sanitize_prompt, spoken_words, switch_target, words_of
 from .turns import SECONDS, TurnDetector, speaking_level
 
 log = logging.getLogger("walkie.conversation")
@@ -96,7 +102,7 @@ MIC_STALE_SECONDS = 5.0     # no microphone audio for this long: a reply stops w
 TYPING_OFFER_SECONDS = 30   # how long the offer to type a refused prompt stands
 ORDER_WAIT_SECONDS = 10     # the mod hasn't picked up a prompt in this time: say so
 READBACK_SECONDS = 60       # how long after a relayed reply has played a yes still counts
-CONFIRM_SECONDS = 120       # how long the app's confirmation waits for a fingerprint after a spoken yes
+CONFIRM_SECONDS = 120       # how long the app's confirmation waits for a fingerprint after a spoken yes or switch
 METRICS_WAIT_SECONDS = 15
 PRUNE_SECONDS = 5
 PHONE_LOST_SECONDS = 120    # the phone has been gone this long: its run ends, so nothing stays connected
@@ -132,6 +138,19 @@ YES_SENT = "Sent your confirmation."
 YES_NOT_SENT = "I can't tell whether your confirmation was sent. Check before you rely on it."  # the command may have saved it, then failed
 REPLY_NOT_SPOKEN = "I couldn't read a reply aloud."
 NOT_FILED = "I can't tell whether that was filed."  # the command may have saved it, then failed
+# These name sessions, so the log names the notice and never its words.
+SWITCH_IN_APP = "To switch to %s, open the app and use your fingerprint."
+SWITCH_WHICH = "Which session? Say switch to, and one of these: %s."
+ALREADY_ON = "You're already talking to %s."
+NOT_SWITCHED = "Not switched. You're still talking to %s."
+NO_OTHER_SESSION = "There's no other session to switch to."
+
+
+class Switch:
+    """A spoken switch, waiting for a fingerprint in the app over the session it names, as at Start."""
+
+    def __init__(self, session):
+        self.instance, self.mod_nonce, self.name = session.instance, session.nonce, session.name
 
 # One of these, at random, says an idle session has the prompt. A busy one says QUEUED instead.
 HEARD_WORDS = ("Working.", "Pondering.", "Thinking.", "Mulling.", "Musing.", "Noodling.", "Cogitating.", "Confabulating.")
@@ -160,7 +179,7 @@ NOTICE_NAMES = {
     DRAFT_OPEN: "draft-open", NO_PANE: "no-pane", PERMISSION: "permission", TURN_FAILED: "turn-failed",
     NOTHING_TO_CONFIRM: "nothing-to-confirm", CONFIRM_IN_APP: "confirm-in-app", NOT_CONFIRMED: "not-confirmed",
     YES_SENT: "yes-sent", YES_NOT_SENT: "yes-not-sent", SESSION_CLOSED: "session-closed", IDLE_ENDED: "idle-ended",
-    REPLY_NOT_SPOKEN: "reply-not-spoken", NOT_FILED: "not-filed",
+    REPLY_NOT_SPOKEN: "reply-not-spoken", NOT_FILED: "not-filed", NO_OTHER_SESSION: "no-other-session",
     PAUSED: "paused", LISTENING: "listening", STILL_PAUSED: "still-paused",
 }
 
@@ -247,7 +266,7 @@ class Conversation:
         self.accepted = set()       # orders the mod has told us it holds
         self.typing_offer = None    # (text, expiry)
         self.readback = None        # the relayed reply a yes would answer
-        self.confirming = None      # (nonce, read-back, expiry): a spoken yes waiting for a fingerprint in the app
+        self.confirming = None      # (nonce, read-back or Switch, expiry): waiting for a fingerprint in the app
         self.active_at = clock()    # the last time anything was said or heard
         self.lost_at = None         # when the phone went, while an approved run waits for it
         self.sounding_relay = None  # the relayed reply whose audio went out last, until it has played through
@@ -315,8 +334,12 @@ class Conversation:
             self._confirmed(message.get("nonce"), message.get("sig"))
         elif what == "declined":
             if self.confirming and message.get("nonce") == self.confirming[0]:
+                waiting = self.confirming[1]
                 self._drop_confirm()
-                self.say(NOT_CONFIRMED)
+                if isinstance(waiting, Switch):
+                    self._not_switched()
+                else:
+                    self.say(NOT_CONFIRMED)
         elif what == "played" and self.sounding_metrics:
             rtt = message.get("rtt") or 0
             self.sounding_metrics.mark("first_audio_played", self.clock() - rtt / 2000)
@@ -339,7 +362,7 @@ class Conversation:
         self._set_chosen(session.instance)
         self.active_at = self.clock()
         self.lost_at = None
-        self.say(CONNECTED % (session.describe(0)["name"] or "the session"))
+        self.say(CONNECTED % (session.name or "the session"))
 
     def _end_run(self, why, notice=None):
         """No session stays chosen, and the phone's run is over. The phone hears why once the notice has had time to play."""
@@ -637,6 +660,10 @@ class Conversation:
             self._confirm_readback(session)
             self._release_relays()
             return
+        target = switch_target(text)
+        if target is not None and self._switch(session, target):
+            self._release_relays()
+            return
         metrics = Metrics(last_voice, self.clock)
         metrics.times["longest_pause"] = round(longest_pause * 1000)
         for name, at in self.detector.finished_marks.items():
@@ -700,12 +727,68 @@ class Conversation:
         self.phone.send_control({"t": "confirm", "nonce": nonce, "text": readback.spoken})
         self.say(CONFIRM_IN_APP)
 
+    # --- switching sessions by voice ------------------------------------------------
+
+    def _switch(self, session, target):
+        """A spoken switch. It asks the app for a fingerprint over the session it names, so a voice alone opens nothing.
+
+        A name that matches no session isn't a switch, so "switch to the main branch" goes to the session as a prompt.
+        """
+        listed = [s for s in self.modlink.sessions.values() if s.nonce]
+        if target:
+            matches = [s for s in listed if compact(s.name) == target]
+            if not matches:
+                return False
+            matches = [s for s in matches if s is not session]
+            if not matches:
+                self._notice("already-on", ALREADY_ON % session.name)
+                return True
+        else:
+            matches = [s for s in listed if s is not session]
+            if not matches:
+                self.say(NO_OTHER_SESSION)
+                return True
+        if len(matches) > 1:
+            self._notice("switch-which", SWITCH_WHICH % ", ".join(sorted(s.name for s in matches)))
+            return True
+        switch = Switch(matches[0])
+        self._tone("ack")
+        nonce = security.new_nonce()
+        self.confirming = (nonce, switch, self.clock() + CONFIRM_SECONDS)
+        self.phone.send_control({"t": "confirm", "nonce": nonce, "text": "Switch to %s?" % switch.name,
+                                 "switch": {"id": switch.instance, "modNonce": switch.mod_nonce}})
+        self._notice("switch-in-app", SWITCH_IN_APP % switch.name)
+        return True
+
+    def _switched(self, nonce, switch, expires, signature):
+        """A fingerprint in the app signed the session the switch named, over this run, exactly as at Start."""
+        message = security.start_message(nonce, self.phone.run_id, switch.instance, switch.mod_nonce)
+        if (not self.phone.approved or self.clock() > expires or not self.phone.signed(message, signature)
+                or self.start_problem(switch.instance, switch.mod_nonce)):
+            self._not_switched()
+            return
+        log.info("a fingerprint switched sessions")
+        self.phone_approved({"session": switch.instance, "modNonce": switch.mod_nonce, "nonce": nonce,
+                             "run": self.phone.run_id, "sig": signature})
+
+    def _not_switched(self):
+        session = self._chosen_session()
+        if session:
+            self._notice("not-switched", NOT_SWITCHED % session.name)
+
+    def _notice(self, name, text):
+        log.info("notice %s", name)
+        self.say(text)
+
     def _confirmed(self, nonce, signature):
         """A fingerprint in the app, over the words the owner heard. Only now does the yes go to the session."""
         confirming = self.confirming
         if not confirming or nonce != confirming[0]:
             return
         self._drop_confirm()
+        if isinstance(confirming[1], Switch):
+            self._switched(nonce, confirming[1], confirming[2], signature)
+            return
         session = self._chosen_session()
         readback = confirming[1]
         if (session is None or not session.front_desk or self.clock() > confirming[2]

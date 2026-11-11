@@ -35,7 +35,7 @@ An agent can follow these steps as written. The front desk needs three commands 
    gateway/.venv/bin/walkie-front-desk
    ```
 
-1. In the app, choose **front-desk** from the list of sessions, and tap **Start**. Like any session, it takes your fingerprint.
+1. In the app, choose **front-desk** from the list of sessions, and tap **Start**. Like any session, it takes your fingerprint, and you can [switch to it by voice](usage.md#switch-sessions-by-voice).
 
 To stop the front desk, press Ctrl+C, or stop the launcher process it names when it starts. The session reads its input from the launcher, so it ends with the launcher, even if the launcher is killed. A second launcher for the same state folder refuses to start. The session saves no transcript, and replies from before its first start are never read out.
 

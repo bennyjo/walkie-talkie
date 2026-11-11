@@ -22,6 +22,7 @@ import android.os.SystemClock;
 import android.util.Log;
 import android.view.KeyEvent;
 import java.io.IOException;
+import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
@@ -32,6 +33,7 @@ import org.json.JSONObject;
  *
  * It starts only with a fingerprint's signature for one session, and it stops for good when the
  * gateway ends that run. The next Start takes a new fingerprint, like a banking app's next login.
+ * A spoken switch to another session keeps the run, and takes a fingerprint in the app too.
  */
 public class TalkService extends Service implements GatewayLink.Listener, SpeakerPipe.Listener, MicPipe.Listener {
     static final String ACTION_START = "dev.walkietalkie.START";
@@ -77,6 +79,7 @@ public class TalkService extends Service implements GatewayLink.Listener, Speake
         volatile int talkOvers;
         volatile int resumedTalkOvers;
         volatile String session;    // the name of the session this run talks to
+        volatile String run;        // this run, which a fingerprint signs again to switch sessions
         volatile int pairingDays = -1;
         volatile JSONObject confirm; // a read-back waiting for a fingerprint, or null
         volatile boolean pairingOver; // the Mac wants this phone to pair again
@@ -183,6 +186,7 @@ public class TalkService extends Service implements GatewayLink.Listener, Speake
         status.voices = null;
         status.confirm = null;
         status.session = intent.getStringExtra(EXTRA_NAME);
+        status.run = run;
         link.start();
         audio.registerAudioDeviceCallback(deviceWatch, main);
         mic.watchRoute(routeWatch, main);
@@ -196,6 +200,7 @@ public class TalkService extends Service implements GatewayLink.Listener, Speake
         status.running = false;
         status.connected = false;
         status.confirm = null;
+        status.run = null;
         getSystemService(NotificationManager.class).cancel(CONFIRM_NOTIFICATION);
         if (mic != null) mic.stop();
         if (speaker != null) speaker.stop();
@@ -368,6 +373,7 @@ public class TalkService extends Service implements GatewayLink.Listener, Speake
         switch (message.optString("t")) {
             case "sessions":
                 status.sessions = message;
+                showChosen(message);
                 break;
             case "ended":
                 end(endedText(message.optString("why")));
@@ -408,6 +414,17 @@ public class TalkService extends Service implements GatewayLink.Listener, Speake
         String why = answer.optString("refused");
         main.post(() -> end(refusedText(why)));
         return false;
+    }
+
+    /** After a spoken switch, the screen names the session the gateway now routes to. */
+    private static void showChosen(JSONObject sessions) {
+        JSONArray list = sessions.optJSONArray("list");
+        if (list == null || sessions.isNull("chosen")) return;
+        String chosen = sessions.optString("chosen");
+        for (int i = 0; i < list.length(); i++) {
+            JSONObject row = list.optJSONObject(i);
+            if (row != null && chosen.equals(row.optString("id"))) status.session = MainActivity.rowName(row);
+        }
     }
 
     private static String refusedText(String why) {

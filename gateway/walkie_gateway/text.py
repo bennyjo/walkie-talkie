@@ -434,6 +434,28 @@ def kind(text):
     return "prompt"
 
 
+# The transcriber often drops the "ch" before "session", so "Swit session." is the same two words.
+SWITCH_ANY = {"switch session", "switch sessions", "swit session", "swit sessions"}
+
+
+def switch_target(text):
+    """What a spoken switch names, run together: "switch to first mate" gives "firstmate".
+
+    An empty string is a switch that names no session, and None is no switch at all.
+    """
+    words = [w for w in words_of(text) if w not in FILLERS]
+    if " ".join(words) in SWITCH_ANY:
+        return ""
+    if words[:2] != ["switch", "to"] or len(words) < 3:
+        return None
+    return compact("".join(words[2:])) or None
+
+
+def compact(name):
+    """A name as a switch compares it: lowercase letters and digits only, so "walkie-talkie" is "walkietalkie"."""
+    return re.sub(r"[^a-z0-9]", "", name.lower())
+
+
 def sanitize_prompt(text):
     """One line of printable text, never a slash command, shell command, or memory."""
     text = "".join(c for c in " ".join(text.split()) if c.isprintable())

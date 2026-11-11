@@ -5,8 +5,8 @@ For testing on the Mac, with no phone. Pair once with --pair CODE --key-file FIL
 software key in place of the phone's hardware key, saves it in FILE, and prints the token. Each run
 then starts as the app does: it lists the sessions, asks for a challenge, signs the chosen session
 with that key, and logs in with the signature. Each --say file is one turn. It prints when each thing
-arrived, in seconds after that clip ended. With --confirm, it signs any read-back the gateway asks to
-confirm, as a fingerprint in the app would.
+arrived, in seconds after that clip ended. With --confirm, it signs any read-back or spoken switch the
+gateway asks to confirm, as a fingerprint in the app would.
 
 To talk over a reply, --talk-over names a clip to speak, --talk-after seconds into the reply. Like
 the app, it sends a hold just after the voice starts, and stops playing what it received. --leak-db
@@ -161,8 +161,10 @@ class FakePhone:
                 elif message["t"] == "confirm" and message.get("nonce"):
                     print("asked to confirm:", message["text"], flush=True)
                     if self.confirm:
-                        spoken = security.confirm_message(message["nonce"], message["text"])
-                        self.send({"t": "confirmed", "nonce": message["nonce"], "sig": sign(self.key, spoken)})
+                        target = message.get("switch")
+                        signed = (security.start_message(message["nonce"], self.run, target["id"], target["modNonce"])
+                                  if target else security.confirm_message(message["nonce"], message["text"]))
+                        self.send({"t": "confirmed", "nonce": message["nonce"], "sig": sign(self.key, signed)})
                 self.events.append((now, message["t"] + ":" + str(message.get("kind", ""))))
 
     def _leak(self, packet):
@@ -246,7 +248,8 @@ async def main():
     parser.add_argument("--pair")
     parser.add_argument("--token-file")
     parser.add_argument("--key-file", required=True, help="the stand-in for the phone's hardware key")
-    parser.add_argument("--confirm", action="store_true", help="confirm read-backs, as a fingerprint in the app would")
+    parser.add_argument("--confirm", action="store_true",
+                        help="confirm read-backs and spoken switches, as a fingerprint in the app would")
     parser.add_argument("--session", help="pick the session whose name holds this text")
     parser.add_argument("--say", action="append", default=[], help="a 16 kHz mono WAV to speak; repeatable")
     parser.add_argument("--tap-after", type=float, help="seconds after the first reply audio to tap")
