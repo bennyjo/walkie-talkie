@@ -746,13 +746,16 @@ class ConversationTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.order()["submit"], "Switch to the main branch.")
         self.assertIsNone(self.conversation.confirming)
 
-    async def test_naming_the_session_you_are_on_says_so(self):
-        self.two_logins()
-        self.finish_turn("Switch to first mate.")
-        await self.settle()
-        self.assertEqual(self.phone.said(), [module.ALREADY_ON % "firstmate"])
-        self.assertIsNone(self.conversation.confirming)
-        self.assertEqual(len(self.session.orders), 0)
+    async def test_naming_the_session_you_are_on_is_an_ordinary_prompt(self):
+        # A folder named after a common word, as in a worktree layout: "switch to main" is a git instruction for it.
+        work, other = self.two_logins()
+        work.cwd, work.login = "/Users/me/proj/main", "default"
+        other.cwd, other.login = "/Users/me/proj/feature-x", "default"
+        for said in ("Switch to main.", "Switch to main, then pull."):
+            self.finish_turn(said)
+            self.assertEqual(self.order()["submit"], said)
+            self.assertIsNone(self.conversation.confirming)
+        self.assertEqual(len(other.orders), 0)
 
     async def test_with_more_than_one_other_session_a_bare_switch_asks_which(self):
         self.two_logins()
@@ -816,6 +819,38 @@ class ConversationTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(self.asked_switch(), {"t": "confirm", "nonce": None})
             self.conversation.phone_message({"t": "confirmed", "nonce": asked["nonce"], "sig": "good"})
             self.assertEqual(self.conversation.chosen, "7")
+
+    async def test_a_yes_or_no_while_a_switch_waits_withdraws_it_and_reaches_no_session(self):
+        # The switch notice invites a spoken yes, and the session you're leaving may have just asked a question.
+        work, personal = self.two_logins()
+        for desk in (False, True):
+            work.front_desk = desk
+            for answer in ("Yes.", "No."):
+                self.finish_turn("Switch session.")
+                asked = self.asked_switch()
+                self.finish_turn(answer)
+                self.assertEqual(self.asked_switch(), {"t": "confirm", "nonce": None})
+                self.assertIsNone(self.conversation.confirming)
+                await self.not_switched()
+                self.assertEqual(len(work.orders), 0)
+                self.conversation.phone_message({"t": "confirmed", "nonce": asked["nonce"], "sig": "good"})
+                self.assertEqual(self.conversation.chosen, "7")
+                self.assertEqual(len(personal.orders), 0)
+
+    async def test_a_fingerprint_for_a_switch_that_a_later_one_replaced_moves_nothing_and_says_so(self):
+        self.two_logins()
+        third = self.link.sessions["9"] = Session("9")
+        third.cwd, third.nonce = "/work/walkie-talkie", "nonce-9"
+        self.finish_turn("Switch to first mate personal.")
+        first = self.asked_switch()["nonce"]
+        self.finish_turn("Switch to walkie talkie.")
+        self.assertEqual(self.asked_switch()["switch"]["id"], "9")
+        self.conversation.phone_message({"t": "confirmed", "nonce": first, "sig": "good"})
+        await self.not_switched()
+        self.assertEqual(len(third.orders), 0)
+        self.confirm_in_app()  # the latest switch still stands
+        self.assertEqual(self.conversation.chosen, "9")
+        self.assertEqual(third.orders.popleft()["grant"]["session"], "9")
 
     async def test_a_switch_lets_the_session_before_go_as_stop_does(self):
         work, _ = self.two_logins()
