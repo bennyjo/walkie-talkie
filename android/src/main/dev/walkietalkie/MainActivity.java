@@ -341,7 +341,7 @@ public class MainActivity extends Activity {
         String run = TalkService.status.run;
         String signed;
         if (target != null) {
-            // A spoken switch: the fingerprint signs the other session for this run, exactly as Start does.
+            // A switch, spoken or tapped: the fingerprint signs the other session for this run, exactly as Start does.
             if (run == null) return;
             signed = GatewayLink.startMessage(nonce, run, target.optString("id"), target.optString("modNonce"));
         } else {

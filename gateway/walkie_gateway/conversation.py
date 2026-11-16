@@ -147,7 +147,7 @@ NO_OTHER_SESSION = "There's no other session to switch to."
 
 
 class Switch:
-    """A spoken switch, waiting for a fingerprint in the app over the session it names, as at Start."""
+    """A switch, spoken or tapped, waiting for a fingerprint in the app over the session it names, as at Start."""
 
     def __init__(self, session):
         self.instance, self.mod_nonce, self.name = session.instance, session.nonce, session.name
@@ -734,7 +734,7 @@ class Conversation:
         self.phone.send_control({"t": "confirm", "nonce": nonce, "text": readback.spoken})
         self.say(CONFIRM_IN_APP)
 
-    # --- switching sessions by voice ------------------------------------------------
+    # --- switching sessions ----------------------------------------------------------
 
     def _switch(self, session, target):
         """A spoken switch. It asks the app for a fingerprint over the session it names, so a voice alone opens nothing.
