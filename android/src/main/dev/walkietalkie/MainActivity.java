@@ -35,6 +35,7 @@ import java.io.IOException;
 import java.security.GeneralSecurityException;
 import java.security.Signature;
 import java.util.Locale;
+import java.util.Objects;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -49,6 +50,7 @@ public class MainActivity extends Activity {
     private static final long REFRESH_MS = 500;
     private static final int BRAND_GREEN = 0xFF1F6F5C; // white text stays readable on it, day and night
     private static final int WARN_DAYS = 3;
+    private static final long MESSAGE_MS = 8000; // how long a message shows during a call
     private static final long SWITCH_WAIT_MS = 5000; // for the Mac to ask for the fingerprint over a tapped session
     private static final String CONNECT_WHY = "Your fingerprint lets this phone talk to that session until you stop.";
 
@@ -87,7 +89,8 @@ public class MainActivity extends Activity {
     private JSONObject switching; // the row tapped while talking, until the Mac asks for its fingerprint
     private String switchingAfter; // the confirmation already waiting at that tap, which isn't the Mac's answer
     private long switchingSince;
-    private String talkingTo;     // the session a message was about, so it goes once the call moves
+    private String seenMessage;
+    private long messageSince;
 
     private final Runnable refresh = new Runnable() {
         @Override public void run() {
@@ -493,9 +496,12 @@ public class MainActivity extends Activity {
             if (pairing != null) startBrowse(pairing);
         }
         if (startWanted && browse != null && browseConnected && picked != null && !asking) requestStart();
-        if (status.running && status.session != null && !status.session.equals(talkingTo)) {
-            if (talkingTo != null) message = null; // it was about the call before this switch
-            talkingTo = status.session;
+        if (!Objects.equals(message, seenMessage)) {
+            seenMessage = message;
+            messageSince = SystemClock.elapsedRealtime();
+        }
+        if (status.running && message != null && SystemClock.elapsedRealtime() - messageSince > MESSAGE_MS) {
+            message = null;
         }
         checkSwitch(status);
         if (status.confirm != null) show(confirmText, status.confirm.optString("text"));
@@ -518,8 +524,8 @@ public class MainActivity extends Activity {
         if (status.running) {
             if (switching != null) return "Switching to " + rowName(switching) + ".";
             if (status.confirm != null) return "Confirm below with your fingerprint, or tap Not now.";
-            if (message != null) return message;
             if (!status.connected) return "Connecting to the Mac.";
+            if (message != null) return message;
             return "Talking to " + status.session + ". Lock the phone, and talk." + daysLeft(status.pairingDays);
         }
         if (message != null) return message;

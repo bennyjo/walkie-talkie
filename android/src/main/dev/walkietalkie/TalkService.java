@@ -389,6 +389,7 @@ public class TalkService extends Service implements GatewayLink.Listener, Speake
         switch (message.optString("t")) {
             case "sessions":
                 status.sessions = message;
+                tappedSwitch = null;
                 showChosen(message);
                 break;
             case "ended":
