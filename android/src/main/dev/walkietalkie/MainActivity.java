@@ -444,7 +444,14 @@ public class MainActivity extends Activity {
                 .setTitle(title)
                 .setDescription(description)
                 .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG)
-                .setNegativeButton("Cancel", getMainExecutor(), (dialog, which) -> { })
+                // Android doesn't report this button as an error, so it ends the prompt the same way a dismissal does.
+                .setNegativeButton("Cancel", getMainExecutor(), (dialog, which) -> {
+                    asking = false;
+                    message = null;
+                    if (cancelled != null) cancelled.run();
+                    if (!resumed) stopBrowse();
+                    render();
+                })
                 .build();
         asking = true;
         prompt.authenticate(new BiometricPrompt.CryptoObject(signer), new CancellationSignal(), getMainExecutor(),
