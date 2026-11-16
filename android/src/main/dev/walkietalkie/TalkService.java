@@ -33,7 +33,8 @@ import org.json.JSONObject;
  *
  * It starts only with a fingerprint's signature for one session, and it stops for good when the
  * gateway ends that run. The next Start takes a new fingerprint, like a banking app's next login.
- * A spoken switch to another session keeps the run, and takes a fingerprint in the app too.
+ * A switch to another session, spoken or tapped in the app's list, keeps the run, and takes a
+ * fingerprint in the app too.
  */
 public class TalkService extends Service implements GatewayLink.Listener, SpeakerPipe.Listener, MicPipe.Listener {
     static final String ACTION_START = "dev.walkietalkie.START";
@@ -41,12 +42,14 @@ public class TalkService extends Service implements GatewayLink.Listener, Speake
     static final String ACTION_VOICE = "dev.walkietalkie.VOICE";
     static final String ACTION_CONFIRMED = "dev.walkietalkie.CONFIRMED";
     static final String ACTION_DECLINED = "dev.walkietalkie.DECLINED";
+    static final String ACTION_SWITCH = "dev.walkietalkie.SWITCH";
     static final String EXTRA_VOICE = "voice";
     static final String EXTRA_RUN = "run";
     static final String EXTRA_APPROVE = "approve";
     static final String EXTRA_NAME = "name";
     static final String EXTRA_NONCE = "nonce";
     static final String EXTRA_SIG = "sig";
+    static final String EXTRA_SESSION = "session";
 
     private static final String TAG = "walkie";
     private static final String CHANNEL = "talk";
@@ -98,6 +101,7 @@ public class TalkService extends Service implements GatewayLink.Listener, Speake
     private boolean micProblem;
     private String shownText = "";
     private long lastTap;
+    private String tappedSwitch; // a session tapped in the open app, whose fingerprint needs no notification
 
     private final AudioDeviceCallback deviceWatch = new AudioDeviceCallback() {
         @Override public void onAudioDevicesAdded(AudioDeviceInfo[] devices) {
@@ -130,6 +134,8 @@ public class TalkService extends Service implements GatewayLink.Listener, Speake
             stopSelf();
         } else if (ACTION_VOICE.equals(action)) {
             if (started) chooseVoice(intent.getStringExtra(EXTRA_VOICE));
+        } else if (ACTION_SWITCH.equals(action)) {
+            if (started) askSwitch(intent.getStringExtra(EXTRA_SESSION));
         } else if (ACTION_CONFIRMED.equals(action) || ACTION_DECLINED.equals(action)) {
             if (started) answerConfirm(intent, ACTION_CONFIRMED.equals(action));
         } else if (ACTION_START.equals(action) && !started) {
@@ -339,6 +345,16 @@ public class TalkService extends Service implements GatewayLink.Listener, Speake
         }
     }
 
+    /** A session tapped in the list. The gateway answers with a confirm for its fingerprint, as for a spoken switch. */
+    private void askSwitch(String id) {
+        tappedSwitch = id;
+        try {
+            send(new JSONObject().put("id", id), "switch");
+        } catch (JSONException e) {
+            Log.e(TAG, "bad session id");
+        }
+    }
+
     /** From the capture thread: silence now, then the gateway decides whether it was a voice. */
     @Override public void onTalkOver() {
         status.talkOvers++;
@@ -416,7 +432,7 @@ public class TalkService extends Service implements GatewayLink.Listener, Speake
         return false;
     }
 
-    /** After a spoken switch, the screen names the session the gateway now routes to. */
+    /** After a switch, the screen names the session the gateway now routes to. */
     private static void showChosen(JSONObject sessions) {
         JSONArray list = sessions.optJSONArray("list");
         if (list == null || sessions.isNull("chosen")) return;
@@ -471,6 +487,10 @@ public class TalkService extends Service implements GatewayLink.Listener, Speake
             nm.cancel(CONFIRM_NOTIFICATION);
             return;
         }
+        JSONObject target = confirm.optJSONObject("switch");
+        boolean tapped = target != null && target.optString("id").equals(tappedSwitch);
+        tappedSwitch = null;
+        if (tapped) return; // the app is open, and already asking
         nm.createNotificationChannel(new NotificationChannel(CONFIRM_CHANNEL, "Confirmations", NotificationManager.IMPORTANCE_HIGH));
         PendingIntent open = PendingIntent.getActivity(this, 2, new Intent(this, MainActivity.class), PendingIntent.FLAG_IMMUTABLE);
         nm.notify(CONFIRM_NOTIFICATION, new Notification.Builder(this, CONFIRM_CHANNEL)

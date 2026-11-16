@@ -62,7 +62,8 @@ Saying "switch session", or "switch to" and a session's name, asks the app for a
 fingerprint over that session, exactly as Start does, within the same run. Only once
 the signature checks out does the other session take the grant, and the one before is
 let go as at Stop. A spoken switch alone moves nothing, and a name that matches no
-session goes through as an ordinary prompt.
+session goes through as an ordinary prompt. Tapping another session in the app's
+list asks for the same fingerprint, with no spoken notice, since the app is open.
 """
 import asyncio
 import collections
@@ -327,6 +328,8 @@ class Conversation:
             self._phone_held(message.get("id"))
         elif what == "voice":
             self._choose_voice(message.get("id"))
+        elif what == "switch":
+            self._tapped_switch(message.get("id"))
         elif what == "release":
             self._end_run(None)
         elif what == "confirmed":
@@ -755,14 +758,29 @@ class Conversation:
         if len(matches) > 1:
             self._notice("switch-which", SWITCH_WHICH % ", ".join(sorted(s.name for s in matches)))
             return True
-        switch = Switch(matches[0])
         self._tone("ack")
+        switch = self._ask_switch(matches[0])
+        self._notice("switch-in-app", SWITCH_IN_APP % switch.name)
+        return True
+
+    def _tapped_switch(self, instance):
+        """Another session tapped in the app's list. The app is open, so it asks for the fingerprint straight away."""
+        session = self.modlink.sessions.get(instance) if isinstance(instance, str) else None
+        if session is None or not session.nonce or not self.chosen or instance == self.chosen:
+            self.sessions_changed()  # the app's list was out of date
+            return
+        self.active_at = self.clock()
+        self.readback = None  # the newest question owns the yes
+        self._ask_switch(session)
+
+    def _ask_switch(self, session):
+        """Asks the app for a fingerprint over this session, which replaces any confirmation still waiting."""
+        switch = Switch(session)
         nonce = security.new_nonce()
         self.confirming = (nonce, switch, self.clock() + CONFIRM_SECONDS)
         self.phone.send_control({"t": "confirm", "nonce": nonce, "text": "Switch to %s?" % switch.name,
                                  "switch": {"id": switch.instance, "modNonce": switch.mod_nonce}})
-        self._notice("switch-in-app", SWITCH_IN_APP % switch.name)
-        return True
+        return switch
 
     def _switched(self, nonce, switch, expires, signature):
         """A fingerprint in the app signed the session the switch named, over this run, exactly as at Start."""

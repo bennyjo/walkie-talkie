@@ -886,6 +886,64 @@ class ConversationTest(unittest.IsolatedAsyncioTestCase):
         await self.settle()
         self.assertNotIn("Anything from the old session.", self.phone.said())
 
+    # --- switching sessions with a tap in the app -----------------------------------
+
+    def tap_session(self, instance):
+        self.conversation.phone_message({"t": "switch", "id": instance})
+
+    async def test_a_tapped_session_asks_for_the_fingerprint_with_no_spoken_notice_and_moves_nothing_yet(self):
+        _, personal = self.two_logins()
+        self.tap_session("8")
+        await self.settle()
+        asked = self.asked_switch()
+        self.assertEqual(asked["switch"], {"id": "8", "modNonce": "nonce-8"})
+        self.assertEqual(asked["text"], "Switch to firstmate personal?")
+        self.assertEqual(self.phone.said(), [])
+        self.assertEqual(self.tones(), [])
+        self.assertEqual(self.conversation.chosen, "7")
+        self.assertEqual(len(personal.orders), 0)
+
+    async def test_the_fingerprint_after_a_tap_moves_the_call_and_says_where_you_are(self):
+        work, personal = self.two_logins()
+        self.tap_session("8")
+        nonce = self.asked_switch()["nonce"]
+        self.confirm_in_app()
+        self.assertEqual(self.phone.last_signed, module.security.start_message(nonce, "run-1", "8", "nonce-8"))
+        self.assertEqual(self.conversation.chosen, "8")
+        self.assertEqual(personal.orders.popleft()["grant"]["session"], "8")
+        self.assertIsNone(self.conversation.chosen_run(work))
+        self.assertEqual(self.phone.controls[-1]["chosen"], "8")  # the app's list shows where the call is
+        await self.settle()
+        self.assertEqual(self.phone.said(), ["Connected to firstmate personal."])
+
+    async def test_declining_a_tapped_switch_switches_nothing(self):
+        self.two_logins()
+        self.tap_session("8")
+        self.conversation.phone_message({"t": "declined", "nonce": self.asked_switch()["nonce"]})
+        await self.not_switched()
+
+    async def test_tapping_the_session_you_are_on_or_one_that_has_gone_asks_nothing_and_resends_the_list(self):
+        self.two_logins()
+        for instance in ("7", "gone", None):
+            self.phone.controls.clear()
+            self.tap_session(instance)
+            self.assertIsNone(self.conversation.confirming)
+            self.assertEqual([c["t"] for c in self.phone.controls], ["sessions"])
+        await self.settle()
+        self.assertEqual(self.phone.said(), [])
+
+    async def test_a_tap_replaces_a_spoken_switch_still_waiting(self):
+        self.two_logins()
+        third = self.link.sessions["9"] = Session("9")
+        third.cwd, third.nonce = "/work/walkie-talkie", "nonce-9"
+        self.finish_turn("Switch to first mate personal.")
+        spoken = self.asked_switch()["nonce"]
+        self.tap_session("9")
+        self.conversation.phone_message({"t": "confirmed", "nonce": spoken, "sig": "good"})
+        await self.not_switched()
+        self.confirm_in_app()
+        self.assertEqual(self.conversation.chosen, "9")
+
     # --- a run, from a fingerprint to its end --------------------------------------
 
     async def test_a_fingerprint_chooses_the_session_hands_the_mod_its_grant_and_names_it(self):
