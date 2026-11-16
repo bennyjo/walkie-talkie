@@ -14,7 +14,7 @@ Then you just talk. "What's everyone working on?" When you stop, your words go t
 
 If you've set up a front desk, you can talk to it while Firstmate is deep in a long turn. It answers from Firstmate's status and files everything else for Firstmate to pick up. When Firstmate wants to merge, it reads the exact action back, and you hear it word for word. You say "yes", take out the phone, and confirm with your fingerprint. A voice alone confirms nothing there.
 
-To talk to another session, such as one on your personal login, say "switch session". You confirm with your fingerprint in the app, as at Start, and you hear the name of the session you're now talking to.
+To talk to another session, such as one on your personal login, choose it in the app, or say "switch session". Either way, you confirm with your fingerprint, as at Start, and you hear the name of the session you're now talking to.
 
 You never type. Apart from Start, a switch, and a confirmation, the phone stays in your pocket.
 
@@ -99,7 +99,7 @@ A live session can do anything you can do at its keyboard, so getting into one s
 
 To talk to a session, someone needs all of these at once: a device on your tailnet, at the paired phone's address, holding the paired app's secret token, and your fingerprint on that phone's hardware key, for that session, at that Start.
 
-- **A fingerprint at every Start.** The fingerprint unlocks a key in the phone's secure hardware for one signature. Both the gateway and the session check it before the session takes a single spoken prompt. A spoken switch to another session takes a fingerprint the same way.
+- **A fingerprint at every Start.** The fingerprint unlocks a key in the phone's secure hardware for one signature. Both the gateway and the session check it before the session takes a single spoken prompt. A switch to another session, in the app or by voice, takes a fingerprint the same way.
 - **Calls end on their own.** At **Stop**, after 30 minutes with nothing said, after 2 minutes without the phone, and after four hours at most. The next call takes a new fingerprint.
 - **Private network only.** The gateway listens only on the Mac's Tailscale address, accepts only the one paired phone, and both sides prove they hold the token before any audio flows.
 - **Only the sessions you allow.** The mod connects only on the logins you name, and you can deny folders and repositories so they never show on the phone.
@@ -136,7 +136,7 @@ Early: version 0.1.0.
 | Page | What's in it |
 | --- | --- |
 | [Set up](docs/setup.md) | Every setup step, updating the mod, and keeping folders off the phone |
-| [Use it](docs/usage.md) | What happens when you talk, pause, tap, or go quiet, switching sessions by voice, how a message ends, timings, and troubleshooting |
+| [Use it](docs/usage.md) | What happens when you talk, pause, tap, or go quiet, switching sessions, how a message ends, timings, and troubleshooting |
 | [Front desk](docs/front-desk.md) | A small session that answers while your main session is busy, and the fingerprint confirmation for irreversible actions |
 | [Security](docs/security.md) | The full security model and its limits |
 | [Develop](docs/develop.md) | Tests, builds, the code map, and testing without a phone |

@@ -1,6 +1,6 @@
 # Use Walkie Talkie
 
-This page covers a call from Start to Stop, switching sessions by voice, pausing, how the gateway decides a message has ended, the timing log, and troubleshooting.
+This page covers a call from Start to Stop, switching sessions, pausing, how the gateway decides a message has ended, the timing log, and troubleshooting.
 
 ## Start a call
 
@@ -9,7 +9,7 @@ This page covers a call from Start to Stop, switching sessions by voice, pausing
 1. Tap **Start**, allow the microphone and notifications the first time, and touch the fingerprint sensor. The prompt names the session you chose. You hear "Connected to" and its name.
 1. Lock the phone, and talk.
 
-Every Start takes a fingerprint, and the fingerprint lets the phone talk to that one session for that one call. To talk to another session, [switch by voice](#switch-sessions-by-voice), or tap **Stop**, choose it, and tap **Start**.
+Every Start takes a fingerprint, and the fingerprint lets the phone talk to that one session for that one call. To talk to another session, [switch](#switch-sessions): choose it in the app, or say **switch session**.
 
 | You | What happens |
 | --- | --- |
@@ -29,15 +29,29 @@ Every Start takes a fingerprint, and the fingerprint lets the phone talk to that
 | Hear "stopped at the keyboard" | Someone pressed Esc in that session, so it refuses spoken prompts. Say **type it** within 30 seconds to send that message through the session's own prompt box. Over the notice, a lone "type it" is too short to count, so say "yes, type that", or wait for the notice to end. Messages queued after it are dropped, and you hear that they were. This works only in herdr or tmux. In a plain terminal, you hear that it can't reach the terminal |
 | Hear "asking for a permission" | The session needs an answer at the keyboard. Tap to stop the turn |
 
-## Switch sessions by voice
+## Switch sessions
 
-You can move the call to another session without stopping it. The mod must run in that session too, so it's in the app's list. Sessions on different logins work the same way, so you can switch between a session on your work login and one on your personal login.
+You can move the call to another session without stopping it, in the app or by voice. The mod must run in that session too, so it's in the app's list. Sessions on different logins work the same way, so you can switch between a session on your work login and one on your personal login.
+
+Like Start, a switch takes your fingerprint, and the fingerprint signs that one session. The session you leave is let go as at **Stop**: messages still in its queue are dropped, and you hear that they were. A turn already running there carries on, and nobody hears its reply.
+
+### In the app
+
+During a call, the app lists the sessions, with the one you're talking to selected.
+
+1. Choose another session. The fingerprint prompt names it.
+1. Touch the sensor.
+1. You hear "Connected to" and its name. The list selects it, and the top of the screen says "Talking to" and its name.
+
+If you cancel the fingerprint, you hear "Not switched" and the name of the session you're still talking to. A switch in the app needs the gateway from the same version as the app. With an older gateway, the screen says the call didn't move.
+
+### By voice
 
 1. Say **switch session** to go to the only other session, or **switch to** and the session's name, such as "switch to firstmate personal".
 1. You hear "To switch to" and the session's name, and a notification says something is waiting for your fingerprint. Open the app: it asks "Switch to" and the name. Tap **Confirm** and touch the sensor, or tap **Not now**.
 1. You hear "Connected to" and the name of the session you're now talking to.
 
-Like Start, a switch takes your fingerprint, and the fingerprint signs that one session. A spoken switch alone moves nothing. The session you leave is let go as at **Stop**: messages still in its queue are dropped, and you hear that they were. A turn already running there carries on, and nobody hears its reply.
+A spoken switch alone moves nothing.
 
 | You say | What happens |
 | --- | --- |
@@ -134,7 +148,7 @@ Pick a voice under **Voice** in the app, once you've tapped **Start**. All 11 co
 | No sessions in the app | No session has the mod running. Type `/reload-plugins` in a session that started before the install. If it says `0 plugins`, run the install for that session's login. A session in a denied folder, on a login the install didn't name, or in an orchestrated worker never shows. `0 hooks` in that line is normal |
 | The fingerprint prompt says the key has gone | A fingerprint was added to the phone, or the pairing is over 30 days old. Tap **Pair again** |
 | The app says "That session changed a moment ago" | Its list was a moment out of date. Tap **Start** again |
-| "Which session?" names the same session twice | Two sessions are in folders of the same name, so their spoken names match. They're on one login, or one is on a login whose path holds a denied name, so its login goes unnamed. Switch with **switch session** if they're the only two, or tap **Stop** and choose in the app by where the folder is |
+| "Which session?" names the same session twice | Two sessions are in folders of the same name, so their spoken names match. They're on one login, or one is on a login whose path holds a denied name, so its login goes unnamed. Switch with **switch session** if they're the only two, or choose the session in the app by where the folder is |
 | **front-desk** isn't in the app's list | The launcher isn't running, it ran in a stripped environment, such as `env -i`, where Claude Code doesn't load mods, or its `CLAUDE_CONFIG_DIR` isn't a login you installed for. Start it from your usual shell |
 | `A front desk is already running` | Another launcher holds this state folder. Stop that one first |
 | "Connect your USB mic" | The input route isn't USB. With Advanced Protection on, connect the mic before you lock the phone |

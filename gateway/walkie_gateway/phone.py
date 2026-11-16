@@ -43,7 +43,9 @@ Other CONTROL messages, gateway to phone: "sessions", "voices", "tone", "pong",
 id and a "leak" flag, and "leak". That flag and that message say the sound behind
 the hold may have been the earbuds. Phone to gateway: "release", "tap", "played",
 "voice", "confirmed", "declined", "ping", and "hold" with an id, which says the
-phone silenced a reply because it heard a voice over it.
+phone silenced a reply because it heard a voice over it, and "switch" with the
+id of a session tapped in the app's list, which the gateway answers with a
+"confirm" for that session's fingerprint, as for a spoken switch.
 
 To pair instead: phone sends {"t": "pair", "code": C, "key": K}, with K its public
 key, and the gateway answers {"t": "paired", "token": T} and closes.

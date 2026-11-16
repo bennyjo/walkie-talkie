@@ -15,6 +15,7 @@ import android.os.Bundle;
 import android.os.CancellationSignal;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.text.InputType;
 import android.text.SpannableStringBuilder;
 import android.text.Spanned;
@@ -34,20 +35,23 @@ import java.io.IOException;
 import java.security.GeneralSecurityException;
 import java.security.Signature;
 import java.util.Locale;
+import java.util.Objects;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
 /**
  * One screen: pair with the Mac, choose a session, and tap Start. Start asks for a fingerprint, every
- * time, and the fingerprint signs that one session for that one run. A read-back that needs a yes, and
- * a spoken switch to another session, are confirmed here with a fingerprint too. Like a banking app, the
- * screen can't be captured.
+ * time, and the fingerprint signs that one session for that one run. While talking, choosing another
+ * session switches to it, with a fingerprint too. A read-back that needs a yes, and a spoken switch, are
+ * confirmed here with a fingerprint as well. Like a banking app, the screen can't be captured.
  */
 public class MainActivity extends Activity {
     private static final long REFRESH_MS = 500;
     private static final int BRAND_GREEN = 0xFF1F6F5C; // white text stays readable on it, day and night
     private static final int WARN_DAYS = 3;
+    private static final long MESSAGE_MS = 8000; // how long a message shows during a call
+    private static final long SWITCH_WAIT_MS = 5000; // for the Mac to ask for the fingerprint over a tapped session
     private static final String CONNECT_WHY = "Your fingerprint lets this phone talk to that session until you stop.";
 
     private final Handler main = new Handler(Looper.getMainLooper());
@@ -82,6 +86,11 @@ public class MainActivity extends Activity {
     private String message;    // what went wrong with the last Start, until the next choice
     private boolean asking;    // a fingerprint prompt is up
     private boolean startWanted; // Start was tapped, and waits for the list's connection, as after a permission dialog
+    private JSONObject switching; // the row tapped while talking, until the Mac asks for its fingerprint
+    private String switchingAfter; // the confirmation already waiting at that tap, which isn't the Mac's answer
+    private long switchingSince;
+    private String seenMessage;
+    private long messageSince;
 
     private final Runnable refresh = new Runnable() {
         @Override public void run() {
@@ -267,6 +276,8 @@ public class MainActivity extends Activity {
 
     private void toggle() {
         if (TalkService.status.running) {
+            message = null;
+            switching = null;
             stopService(new Intent(this, TalkService.class));
         } else if (picked == null) {
             message = "Choose a session first.";
@@ -317,6 +328,11 @@ public class MainActivity extends Activity {
     }
 
     private void confirm() {
+        confirm(false);
+    }
+
+    /** A tapped switch says no when its fingerprint is cancelled, since nothing else on screen asked for it. */
+    private void confirm(boolean tapped) {
         JSONObject confirm = TalkService.status.confirm;
         if (confirm == null) return;
         String nonce = confirm.optString("nonce");
@@ -325,7 +341,7 @@ public class MainActivity extends Activity {
         String run = TalkService.status.run;
         String signed;
         if (target != null) {
-            // A spoken switch: the fingerprint signs the other session for this run, exactly as Start does.
+            // A switch, spoken or tapped: the fingerprint signs the other session for this run, exactly as Start does.
             if (run == null) return;
             signed = GatewayLink.startMessage(nonce, run, target.optString("id"), target.optString("modNonce"));
         } else {
@@ -340,15 +356,62 @@ public class MainActivity extends Activity {
         fingerprint(title, description, signed, signature -> startService(new Intent(this, TalkService.class)
                 .setAction(TalkService.ACTION_CONFIRMED)
                 .putExtra(TalkService.EXTRA_NONCE, nonce)
-                .putExtra(TalkService.EXTRA_SIG, signature)));
+                .putExtra(TalkService.EXTRA_SIG, signature)), tapped ? () -> decline(nonce) : null);
     }
 
     private void decline() {
         JSONObject confirm = TalkService.status.confirm;
-        if (confirm == null) return;
+        if (confirm != null) decline(confirm.optString("nonce"));
+    }
+
+    private void decline(String nonce) {
         startService(new Intent(this, TalkService.class)
                 .setAction(TalkService.ACTION_DECLINED)
-                .putExtra(TalkService.EXTRA_NONCE, confirm.optString("nonce")));
+                .putExtra(TalkService.EXTRA_NONCE, nonce));
+    }
+
+    /** A row tapped in the list. Before Start, it's the choice. While talking, it switches the call there. */
+    private void choose(JSONObject session) {
+        message = null;
+        TalkService.Status status = TalkService.status;
+        if (!status.running) {
+            picked = session;
+            status.why = null;
+        } else if (session.optString("id").equals(chosenId(status)) || status.run == null) {
+            switching = null;
+            shownSessions = null; // the check goes back to the session you're on
+        } else {
+            switching = session;
+            switchingSince = SystemClock.elapsedRealtime();
+            switchingAfter = status.confirm == null ? null : status.confirm.optString("nonce");
+            startService(new Intent(this, TalkService.class)
+                    .setAction(TalkService.ACTION_SWITCH)
+                    .putExtra(TalkService.EXTRA_SESSION, session.optString("id")));
+        }
+        render();
+    }
+
+    /** Once the Mac asks for the fingerprint over the tapped session, the prompt comes up with no more taps. */
+    private void checkSwitch(TalkService.Status status) {
+        if (switching == null) return;
+        JSONObject confirm = status.confirm;
+        JSONObject target = confirm == null ? null : confirm.optJSONObject("switch");
+        if (!status.running) {
+            switching = null;
+        } else if (target != null && target.optString("id").equals(switching.optString("id"))
+                && !confirm.optString("nonce").equals(switchingAfter)) {
+            if (!resumed || asking) return;
+            switching = null;
+            confirm(true);
+        } else if (SystemClock.elapsedRealtime() - switchingSince > SWITCH_WAIT_MS) {
+            switching = null;
+            message = "The call didn't move. You're still talking to " + status.session + ".";
+        }
+    }
+
+    private static String chosenId(TalkService.Status status) {
+        JSONObject sessions = status.sessions;
+        return sessions == null || sessions.isNull("chosen") ? null : sessions.optString("chosen");
     }
 
     private interface Signed {
@@ -357,17 +420,23 @@ public class MainActivity extends Activity {
 
     /** A strong fingerprint unlocks the hardware key for one signature over exactly these words. No PIN instead. */
     private void fingerprint(String title, String description, String words, Signed then) {
+        fingerprint(title, description, words, then, null);
+    }
+
+    private void fingerprint(String title, String description, String words, Signed then, Runnable cancelled) {
         Signature signer;
         try {
             signer = PhoneKey.signer();
         } catch (GeneralSecurityException | IOException e) {
             message = "This phone's key has gone, because a fingerprint changed or the pairing ran out. Tap Pair again.";
+            if (cancelled != null) cancelled.run();
             render();
             return;
         }
         if (getSystemService(BiometricManager.class).canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG)
                 != BiometricManager.BIOMETRIC_SUCCESS) {
             message = "Add a fingerprint in the phone's settings first.";
+            if (cancelled != null) cancelled.run();
             render();
             return;
         }
@@ -375,7 +444,14 @@ public class MainActivity extends Activity {
                 .setTitle(title)
                 .setDescription(description)
                 .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG)
-                .setNegativeButton("Cancel", getMainExecutor(), (dialog, which) -> { })
+                // Android doesn't report this button as an error, so it ends the prompt the same way a dismissal does.
+                .setNegativeButton("Cancel", getMainExecutor(), (dialog, which) -> {
+                    asking = false;
+                    message = null;
+                    if (cancelled != null) cancelled.run();
+                    if (!resumed) stopBrowse();
+                    render();
+                })
                 .build();
         asking = true;
         prompt.authenticate(new BiometricPrompt.CryptoObject(signer), new CancellationSignal(), getMainExecutor(),
@@ -394,6 +470,7 @@ public class MainActivity extends Activity {
                         asking = false;
                         message = code == BiometricPrompt.BIOMETRIC_ERROR_USER_CANCELED
                                 || code == BiometricPrompt.BIOMETRIC_ERROR_CANCELED ? null : why + ".";
+                        if (cancelled != null) cancelled.run();
                         if (!resumed) stopBrowse();
                         render();
                     }
@@ -426,6 +503,14 @@ public class MainActivity extends Activity {
             if (pairing != null) startBrowse(pairing);
         }
         if (startWanted && browse != null && browseConnected && picked != null && !asking) requestStart();
+        if (!Objects.equals(message, seenMessage)) {
+            seenMessage = message;
+            messageSince = SystemClock.elapsedRealtime();
+        }
+        if (status.running && message != null && SystemClock.elapsedRealtime() - messageSince > MESSAGE_MS) {
+            message = null;
+        }
+        checkSwitch(status);
         if (status.confirm != null) show(confirmText, status.confirm.optString("text"));
         show(pairedLabel, "Paired with " + host);
         show(startButton, status.running ? "Stop" : "Start");
@@ -444,8 +529,10 @@ public class MainActivity extends Activity {
     private String statusText(TalkService.Status status) {
         if (pairingOver) return "This pairing is over 30 days old. Tap Pair again, with a new code from the Mac.";
         if (status.running) {
+            if (switching != null) return "Switching to " + rowName(switching) + ".";
             if (status.confirm != null) return "Confirm below with your fingerprint, or tap Not now.";
             if (!status.connected) return "Connecting to the Mac.";
+            if (message != null) return message;
             return "Talking to " + status.session + ". Lock the phone, and talk." + daysLeft(status.pairingDays);
         }
         if (message != null) return message;
@@ -462,15 +549,15 @@ public class MainActivity extends Activity {
     }
 
     private void renderSessions(TalkService.Status status) {
-        JSONObject sessions = status.running ? null : browseSessions;
-        String key = (status.running ? "on:" + status.session : "off:") + (sessions == null ? "" : sessions.toString())
-                + ":" + browseConnected;
+        JSONObject sessions = status.running ? status.sessions : browseSessions;
+        String checkedId = status.running ? (switching != null ? switching.optString("id") : chosenId(status)) : null;
+        String key = (status.running ? "on:" + status.session + ":" + checkedId : "off:")
+                + (sessions == null ? "" : sessions.toString()) + ":" + browseConnected;
         if (key.equals(shownSessions)) return;
         shownSessions = key;
         sessionsGroup.removeAllViews();
         if (status.running) {
-            sessionsHint.setVisibility(View.VISIBLE);
-            sessionsHint.setText(withQuietLine(status.session, "To talk to another session, say switch session, or tap Stop."));
+            renderCallSessions(sessions, checkedId, status.session);
             return;
         }
         JSONArray list = sessions == null ? null : sessions.optJSONArray("list");
@@ -489,22 +576,43 @@ public class MainActivity extends Activity {
         for (int i = 0; i < list.length(); i++) {
             JSONObject session = list.optJSONObject(i);
             if (session == null) continue;
-            RadioButton option = new RadioButton(this);
-            option.setText(rowText(session));
-            option.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
-            option.setPadding(dp(8), dp(10), 0, dp(10));
-            sessionsGroup.addView(option);
+            RadioButton option = sessionRow(session);
             if (session.optString("id").equals(pickedId)) {
                 option.setChecked(true);
                 picked = session; // its challenge may be new, so keep the row as the Mac last sent it
             }
-            option.setOnClickListener(v -> {
-                picked = session;
-                message = null;
-                TalkService.status.why = null;
-                render();
-            });
         }
+    }
+
+    /** While talking, the list checks the session the call is on, and choosing another switches there. */
+    private void renderCallSessions(JSONObject sessions, String checkedId, String name) {
+        JSONArray list = sessions == null ? null : sessions.optJSONArray("list");
+        if (list == null || list.length() == 0) { // until the Mac sends the list
+            sessionsHint.setVisibility(View.VISIBLE);
+            sessionsHint.setText(name == null ? "" : name);
+            return;
+        }
+        sessionsHint.setVisibility(list.length() > 1 ? View.VISIBLE : View.GONE);
+        sessionsHint.setText("To switch, choose another session, or say switch session.");
+        for (int i = 0; i < list.length(); i++) {
+            JSONObject session = list.optJSONObject(i);
+            if (session == null) continue;
+            RadioButton option = sessionRow(session);
+            if (session.optString("id").equals(checkedId)) option.setChecked(true);
+            if (session.optString("id").equals(chosenId(TalkService.status))) {
+                picked = session; // so after Stop, Start is one tap away from the session you were on
+            }
+        }
+    }
+
+    private RadioButton sessionRow(JSONObject session) {
+        RadioButton option = new RadioButton(this);
+        option.setText(rowText(session));
+        option.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
+        option.setPadding(dp(8), dp(10), 0, dp(10));
+        sessionsGroup.addView(option);
+        option.setOnClickListener(v -> choose(session));
+        return option;
     }
 
     private void renderVoices(TalkService.Status status) {
