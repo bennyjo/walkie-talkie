@@ -83,8 +83,8 @@ final class PhoneKey {
     }
 
     /**
-     * A signature ready to sign once a fingerprint unlocks it. Throws when the key has gone: a new
-     * fingerprint on the phone, an expired pairing, or no pairing at all. The phone then pairs again.
+     * A signature ready to sign once a fingerprint unlocks it. Throws when it can't. When the key has
+     * gone, from a new fingerprint on the phone or an expired pairing, the phone pairs again.
      */
     static Signature signer() throws GeneralSecurityException, IOException {
         PrivateKey key = (PrivateKey) store().getKey(ALIAS, null);
