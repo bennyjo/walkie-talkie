@@ -377,6 +377,51 @@ test('the voice rules ask for a specific word, not a bare yes', async ($, on) =>
   expect(seen.rows[0]).toContain("Don't ask for a bare yes")
 })
 
+const TALK_FILE = '/home/me/.config/walkie-talkie/talk.md'
+
+async function rulesWith(on, $, talk) {
+  const { clock, seen } = world(on, {
+    orders: [{ chosen: true, id: 1, submit: 'hello' }],
+    read: (path) => (path === TALK_FILE && talk !== null ? { value: talk } : undefined),
+  })
+  await begin($, clock)
+  await clock.settle()
+  expect(seen.reads).toContain(TALK_FILE)
+  expect(seen.rows.length).toBe(1)
+  return seen.rows[0]
+}
+
+test('without a talk file, the shipped rules ask for a short acknowledgement, not the request said back', async ($, on) => {
+  const rules = await rulesWith(on, $, null)
+  expect(rules).toContain("don't repeat their request back to them")
+  expect(rules).toContain('Start with the verdict')
+  expect(rules).toContain('to no later reply')
+  expect(rules).toContain('No code, commands, file paths, URLs')
+  expect(rules).toContain('~/.config/walkie-talkie/talk.md')
+})
+
+test('the talk file replaces the style rules, but not the one-reply framing or what is never read out', async ($, on) => {
+  const rules = await rulesWith(on, $, '---\nspeed: 0.8\n---\n\nTalk like a friend on a walk. Two sentences at most.\n')
+  expect(rules).toContain('Talk like a friend on a walk. Two sentences at most.')
+  expect(rules).not.toContain('Start with the verdict')
+  expect(rules).not.toContain('speed: 0.8')
+  expect(rules.startsWith('Apply these rules to your reply to the prompt next to this note, and to no later reply.')).toBe(true)
+  expect(rules).toContain('No code, commands, file paths, URLs, diffs, logs, tables, credentials')
+  expect(rules).toContain("Don't ask for a bare yes")
+})
+
+test('a talk file with only front matter keeps the shipped style rules', async ($, on) => {
+  const rules = await rulesWith(on, $, '---\nspeed: 0.8\nparagraph_pause: 1.2\n---\n\n')
+  expect(rules).toContain('Start with the verdict')
+  expect(rules).not.toContain('paragraph_pause: 1.2')
+})
+
+test('a talk file with no front matter is all style rules', async ($, on) => {
+  const rules = await rulesWith(on, $, 'Answer in one sentence.')
+  expect(rules).toContain('Answer in one sentence.')
+  expect(rules).not.toContain('Start with the verdict')
+})
+
 test('a rejected abort does not stop the rest of the order', async ($, on) => {
   const { clock, seen } = world(on, {
     orders: [{ chosen: true, id: 2, abort: 'not-the-running-one', submit: 'next' }],

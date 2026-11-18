@@ -1,6 +1,6 @@
 # Use Walkie Talkie
 
-This page covers a call from Start to Stop, switching sessions, pausing, how the gateway decides a message has ended, the timing log, and troubleshooting.
+This page covers a call from Start to Stop, switching sessions, pausing, how the gateway decides a message has ended, the timing log, how it talks, and troubleshooting.
 
 ## Start a call
 
@@ -139,6 +139,43 @@ The app's screen shows the routes, which mic channels carry sound, the round tri
 Pick a voice under **Voice** in the app, once you've tapped **Start**. All of them come with the Kokoro model, the gateway remembers your choice in its state folder, and it takes effect from the next reply.
 
 The gateway's own notices, such as "Paused." or "It's in the queue.", always speak in Michael's American voice, after a short rising tone from the phone. Replies can't use that voice, so you can always tell a notice from a reply that says the same words. If you'd chosen Michael before, replies go back to the default voice.
+
+## How it talks
+
+How fast the voice talks, how long it pauses, and how the session words its replies are set in one Markdown file on the Mac, `~/.config/walkie-talkie/talk.md`. It works like an `AGENTS.md` for talking. Without the file, you get the defaults below. Edits take effect without a restart: the pace from the next sentence, and the rules from the next prompt.
+
+The front matter, between two `---` lines, sets the pace. Each setting is optional:
+
+| Setting | What it sets | Default | Range |
+| --- | --- | --- | --- |
+| `speed` | How fast the voice talks. 1 is the Kokoro voice's natural speed | 0.9 | 0.5 to 2 |
+| `sentence_pause` | Seconds of silence between sentences | 0.4 | 0 to 3 |
+| `paragraph_pause` | Seconds of silence between paragraphs, list items, and lines | 0.9 | 0 to 5 |
+
+A value that's missing or out of range keeps its default, and the gateway logs which setting it ignored. The pause after a reply's last sentence stays short, so you can answer right away. Notices, such as "It's in the queue.", use the speed but not the pauses.
+
+The text after the front matter replaces the session's style rules. If there's no text, the session follows these default rules:
+
+```markdown
+---
+speed: 0.9
+sentence_pause: 0.4
+paragraph_pause: 0.9
+---
+
+Write for the ear:
+
+- Start with the verdict or answer in one sentence: done, not done, blocked, or the answer itself.
+- When they tell you to do something, don't repeat their request back to them. They know what they asked. Acknowledge it in a few words at most, and say only what they don't know yet.
+- Then give at most three short points: what changed, whether you verified it, and what needs their decision.
+- Keep the whole reply under about 100 words, in plain conversational sentences.
+- Their prompts are recognised speech, so read past misheard words, and ask when the meaning is unclear.
+- If you're blocked, say so and ask the one question that unblocks you.
+```
+
+Some rules always apply, whatever the file says. The rules cover only the reply to the prompt they arrive with. The session leaves out code, commands, file paths, URLs, credentials, and similar text, which the gateway drops anyway. Before anything destructive, it asks you to say one specific word back.
+
+You can also ask by voice. Say something like "talk slower from now on" or "keep your confirmations shorter", and the session edits the file, creating it if it's missing, so the change holds for every later reply and session. Changing a file outside its folder may need your permission at the keyboard, and then you hear "asking for a permission".
 
 ## Troubleshooting
 

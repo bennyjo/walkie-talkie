@@ -17,7 +17,7 @@ from .conversation import Conversation
 from .front_desk import MOD_DIR
 from .modlink import ModLink
 from .phone import PhoneServer
-from .speech import OpusDecoder, OpusEncoder, Speech, VoiceDetector, default_models_dir
+from .speech import OpusDecoder, OpusEncoder, Speech, VoiceDetector, default_models_dir, talk_file
 
 DEFAULT_PORT = 8791
 MOD_NAME = "walk-voice"
@@ -43,7 +43,7 @@ async def serve(args):
 
     conversation = Conversation(speech, VoiceDetector(args.models), OpusDecoder, OpusEncoder(),
                                 voice_file=os.path.join(state_dir, "voice"), pause_file=os.path.join(state_dir, "paused"),
-                                heard=not args.no_heard)
+                                heard=not args.no_heard, talk_file=talk_file())
     store = security.PhoneStore(state_dir)
     pairing = security.PairingWindow() if args.pair else None
     phone = PhoneServer(store, conversation, pairing)
