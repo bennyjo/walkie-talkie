@@ -61,8 +61,10 @@ if [ -n "$RUN_TESTS" ]; then
   rm -rf out/test
   mkdir -p out/test
   "$JAVA_HOME/bin/javac" -Xlint:all,-options -Werror -source 11 -target 11 -d out/test \
-    src/main/dev/walkietalkie/TalkGate.java src/main/dev/walkietalkie/EarbudRoutes.java test/dev/walkietalkie/TalkGateTest.java
+    src/main/dev/walkietalkie/TalkGate.java src/main/dev/walkietalkie/EarbudRoutes.java test/dev/walkietalkie/TalkGateTest.java \
+    src/main/dev/walkietalkie/Ducker.java test/dev/walkietalkie/DuckerTest.java
   "$JAVA_HOME/bin/java" -ea -cp out/test dev.walkietalkie.TalkGateTest
+  "$JAVA_HOME/bin/java" -ea -cp out/test dev.walkietalkie.DuckerTest
   exit 0
 fi
 BUILD="out/$VARIANT"

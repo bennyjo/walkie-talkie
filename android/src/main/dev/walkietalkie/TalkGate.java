@@ -21,6 +21,7 @@ final class TalkGate {
     private static final double LEAK_FALL_DB = 0.01;    // per frame, while a reply sounds
     private static final double LEAK_LESSON_DB = 6;     // the most one false alarm can teach
     private static final double SILENT_DB = -120;
+    private static final int SPEECH_HANG_FRAMES = 35;   // 700 ms: a pause between words is still speaking
 
     private final Biquad high = Biquad.highPass(LOW_HERTZ);
     private final Biquad higher = Biquad.highPass(LOW_HERTZ);  // twice, because footsteps are strong
@@ -32,6 +33,8 @@ final class TalkGate {
     private double level = SILENT_DB;
     private double tripLevel = SILENT_DB;
     private int run;
+    private int voiceRun;
+    private int hang;
 
     /** One frame of the mic. True when this frame makes someone's voice certain enough to act on. */
     boolean feed(short[] samples, int count, boolean replySounding) {
@@ -40,6 +43,12 @@ final class TalkGate {
         background[backgroundAt] = level;
         backgroundAt = (backgroundAt + 1) % BACKGROUND_FRAMES;
         backgroundFilled = Math.min(backgroundFilled + 1, BACKGROUND_FRAMES);
+        if (level > threshold) {
+            if (++voiceRun >= TRIP_FRAMES) hang = SPEECH_HANG_FRAMES;
+        } else {
+            voiceRun = 0;
+            if (hang > 0) hang--;
+        }
         if (!replySounding) {
             run = 0;
             return false;
@@ -59,6 +68,11 @@ final class TalkGate {
     void wasLeak() {
         double assumed = threshold() - LEAK_MARGIN_DB;
         leak = Math.max(leak, Math.min(tripLevel, assumed + LEAK_LESSON_DB));
+    }
+
+    /** A voice has been heard within the last 700 ms, whether or not a reply is sounding. */
+    boolean speaking() {
+        return hang > 0;
     }
 
     double level() {

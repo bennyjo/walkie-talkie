@@ -24,6 +24,9 @@ final class SpeakerPipe implements Runnable {
     interface Listener {
         /** The first frame of speech after silence went to the audio system. */
         void onSpeechStarted();
+
+        /** From the speaker thread, every loop: whether a reply is sounding. */
+        void onSounding(boolean sounding);
     }
 
     private static final String TAG = "walkie";
@@ -255,7 +258,9 @@ final class SpeakerPipe implements Runnable {
                 if (samples != SILENCE) lastSpeechAt = SystemClock.elapsedRealtime();
             }
             track.write(samples, 0, samples.length, AudioTrack.WRITE_BLOCKING);
+            listener.onSounding(sounding());
         }
+        listener.onSounding(false);
     }
 
     private static short[] tone(int hertz, double seconds, double level) {
