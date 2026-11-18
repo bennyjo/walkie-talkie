@@ -65,6 +65,7 @@ function world(
     sessionId = () => 'session-1',
     cwd = () => '/work/project',
     read = () => undefined,
+    stat = () => undefined,
   } = {},
 ) {
   mock.env(on, { HOME: '/home/me', CLAUDE_CONFIG_DIR: PERSONAL, ...env })
@@ -76,7 +77,7 @@ function world(
   on('session.cwd', () => ({ value: cwd() }))
   on('session.surfaces', () => ({ value: surfaces }))
   on('process.run', (_, e) => run(e))
-  on('fs.stat', (_, e) => ({ value: { kind: 'dir', size: 0, mtimeMs: 0, isLink: false, realPath: e.path.replace(/\/+$/, '') } }))
+  on('fs.stat', (_, e) => stat(e.path) ?? { value: { kind: 'dir', size: 0, mtimeMs: 0, isLink: false, realPath: e.path.replace(/\/+$/, '') } })
   on('fs.read', (_, e) => {
     seen.reads.push(e.path)
     const own = read(e.path)
@@ -143,7 +144,7 @@ test('an orchestrated worker never connects', async ($, on) => {
 test('a session polls with its live session ID', async ($, on) => {
   const { clock, seen } = world(on)
   await begin($, clock)
-  expect(seen.polls[0]).toEqual({ instance: '4242', session: 'session-1', cwd: '/work/project', chosen: false, nonce: expect.any(String), promptedAt: 0, login: 'personal' })
+  expect(seen.polls[0]).toEqual({ instance: '4242', session: 'session-1', cwd: '/work/project', chosen: false, nonce: expect.any(String), promptedAt: 0, login: 'personal', label: '' })
 })
 
 test('a poll says what the mod last heard about being chosen, so the gateway can correct it at once', async ($, on) => {
@@ -1444,6 +1445,39 @@ for (const [dir, login] of [['', 'default'], [WORK, 'default'], [PERSONAL, 'pers
     const config = { logins: { [WORK]: { deny: [] }, [PERSONAL]: { deny: [] }, [OTHER_LOGIN]: { deny: [] } }, deny: [] }
     const seen = await quiet($, on, { env: { CLAUDE_CONFIG_DIR: dir }, config })
     expect(seen.polls[0].login).toBe(login)
+  })
+}
+
+test('a login goes by the name the install gave it', async ($, on) => {
+  const seen = await quiet($, on, { env: { CLAUDE_CONFIG_DIR: '' }, config: { logins: { [WORK]: { deny: [], name: ' Work ' } }, deny: [] } })
+  expect(seen.polls[0].login).toBe('Work')
+})
+
+test('a login whose given name is denied goes unnamed', async ($, on) => {
+  const seen = await quiet($, on, { config: { logins: { [PERSONAL]: { deny: [], name: 'Secret' } }, deny: ['secret'] } })
+  expect(seen.polls[0].login).toBe('')
+})
+
+// A Firstmate secondmate home declares which secondmate it is in a marker file at its root.
+const MARKER = '/work/project/.fm-secondmate-home'
+const markerFile = (isLink = false) => (path) =>
+  path === MARKER ? { value: { kind: 'file', size: 7, mtimeMs: 0, isLink, realPath: path } } : undefined
+const markerSays = (text) => (path) => (path === MARKER ? { value: text } : undefined)
+
+test('a secondmate home is labelled by the id in its own marker', async ($, on) => {
+  const seen = await quiet($, on, { stat: markerFile(), read: markerSays('walkie\n') })
+  expect(seen.polls[0].label).toBe('secondmate walkie')
+})
+
+for (const [what, options] of [
+  ['a folder with no marker', {}],
+  ['a marker that is a link', { stat: markerFile(true), read: markerSays('walkie\n') }],
+  ['a marker whose id is malformed', { stat: markerFile(), read: markerSays('walkie talkie/../x\n') }],
+  ['a marker whose id is denied', { stat: markerFile(), read: markerSays('walkie\n'), config: { ...CONFIG, deny: ['walkie'] } }],
+]) {
+  test(`${what} gives no label, so the session goes by its folder`, async ($, on) => {
+    const seen = await quiet($, on, options)
+    expect(seen.polls[0].label).toBe('')
   })
 }
 

@@ -5,7 +5,7 @@ This page covers a call from Start to Stop, switching sessions, pausing, how the
 ## Start a call
 
 1. Plug in the receiver, and connect the earbuds.
-1. Open the app. It lists the live sessions, the one with the latest prompt first. Each row shows the folder's name and a short ID, and under them where the folder is, the login, and when the session last took a prompt. So two copies of one repository, or one folder open on two logins, look different. Choose one. When you talk, a session goes by its folder's name, then its login unless that's the default, such as "firstmate personal".
+1. Open the app. It lists the live sessions in groups, one for each Claude Code login, under a heading such as **Work account** or **Personal account**. Within a group, the session with the latest prompt comes first. Each row shows the session's name, and under it where the folder is, when the session last took a prompt, and a short ID. A session goes by its folder's name, except in a Firstmate secondmate home, which goes by the secondmate it declares, such as "secondmate walkie". The main Firstmate goes by its folder's name, "firstmate". The app, the fingerprint prompt, and what you hear all name the session the same way, with its account, such as "secondmate walkie on the personal account". To name a login, see [Name each account](setup.md#name-each-account). Choose a session.
 1. Tap **Start**, allow the microphone and notifications the first time, and touch the fingerprint sensor. The prompt names the session you chose. You hear "Connected to" and its name.
 1. Lock the phone, and talk.
 
@@ -50,7 +50,7 @@ If you cancel the fingerprint, you hear "Not switched" and the name of the sessi
 
 ### By voice
 
-1. Say **switch session** to go to the only other session, or **switch to** and the session's name, such as "switch to firstmate personal".
+1. Say **switch session** to go to the only other session, or **switch to** and the session's name, with or without its account, such as "switch to secondmate walkie" or "switch to firstmate personal".
 1. You hear "To switch to" and the session's name, and a notification says something is waiting for your fingerprint. Open the app: it asks "Switch to" and the name. Tap **Confirm** and touch the sensor, or tap **Not now**.
 1. You hear "Connected to" and the name of the session you're now talking to.
 
@@ -195,7 +195,7 @@ You can also ask by voice. Say something like "talk slower from now on" or "keep
 | The fingerprint prompt says the key has gone | A fingerprint was added to the phone, or the pairing is over 30 days old. Tap **Pair again** |
 | The app says "The key won't sign" or "The fingerprint didn't unlock the key", then an error | The phone's key store refused the key. The error after the message names the exception and its causes. The full trace is in `adb logcat -s walkie` |
 | The app says "That session changed a moment ago" | Its list was a moment out of date. Tap **Start** again |
-| "Which session?" names the same session twice | Two sessions are in folders of the same name, so their spoken names match. They're on one login, or one is on a login whose path holds a denied name, so its login goes unnamed. Switch with **switch session** if they're the only two, or choose the session in the app by where the folder is |
+| "Which session?" names the same session twice | Two sessions have the same name on one login, such as two copies of one repository, or on logins that both go unnamed because their paths hold a denied name. Switch with **switch session** if they're the only two, or choose the session in the app by where the folder is |
 | **front-desk** isn't in the app's list | The launcher isn't running, it ran in a stripped environment, such as `env -i`, where Claude Code doesn't load mods, or its `CLAUDE_CONFIG_DIR` isn't a login you installed for. Start it from your usual shell |
 | `A front desk is already running` | Another launcher holds this state folder. Stop that one first |
 | "Connect your USB mic" | The input route isn't USB. With Advanced Protection on, connect the mic before you lock the phone |

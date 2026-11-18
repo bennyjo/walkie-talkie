@@ -224,7 +224,7 @@ class ModLinkTest(unittest.IsolatedAsyncioTestCase):
         modlink.POLL_HOLD = 0.01
         await post(self.path, "/next", {**SESSION, "nonce": "challenge", "promptedAt": 1000})
         self.assertEqual(self.link.sessions["123"].describe(61000, home="/home/me"),
-                         {"id": "123", "name": "project", "where": "/work", "login": "", "session": "abc",
+                         {"id": "123", "name": "project", "label": "project", "where": "/work", "login": "", "session": "abc",
                           "nonce": "challenge", "ago": 60})
 
     async def test_two_folders_of_one_name_differ_by_where_and_login(self):
@@ -263,12 +263,36 @@ class ModLinkTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.conversation.changes, before + 2)
         self.assertEqual((self.link.sessions["123"].nonce, self.link.sessions["123"].prompted_at), ("two", 5))
 
-    async def test_a_session_is_spoken_of_by_its_folder_then_its_login_unless_the_default(self):
+    async def test_a_session_is_named_by_its_folder_then_its_account_the_same_everywhere(self):
         session = modlink.Session("1")
         session.cwd = "/work/firstmate/"
-        for login, name in (("default", "firstmate"), ("", "firstmate"), ("personal", "firstmate personal")):
+        for login, name in (("work", "firstmate on the work account"), ("", "firstmate"),
+                            ("default", "firstmate on the default account")):
             session.login = login
             self.assertEqual(session.name, name, login)
+            self.assertEqual(session.describe(0)["label"], name, login)
+
+    async def test_a_secondmate_is_named_by_the_label_its_folder_declares(self):
+        modlink.POLL_HOLD = 0.01
+        await post(self.path, "/next", {**SESSION, "cwd": "/home/me/fm/2/firstmate", "login": "personal"})
+        before = self.conversation.changes
+        await post(self.path, "/next", {**SESSION, "cwd": "/home/me/fm/2/firstmate", "login": "personal",
+                                        "label": " secondmate\n walkie "})
+        self.assertGreater(self.conversation.changes, before)
+        session = self.link.sessions["123"]
+        self.assertEqual(session.name, "secondmate walkie on the personal account")
+        described = session.describe(0, home="/home/me")
+        self.assertEqual((described["name"], described["where"]), ("secondmate walkie", "~/fm/2"))
+        await post(self.path, "/next", {**SESSION, "label": "x" * 100})
+        self.assertEqual(session.label, "x" * modlink.MAX_LABEL)
+
+    async def test_a_spoken_name_matches_the_title_alone_or_with_its_account(self):
+        session = modlink.Session("1")
+        session.cwd, session.label, session.login = "/fm/firstmate", "secondmate walkie", "personal"
+        for said in ("secondmatewalkie", "secondmatewalkiepersonal", "secondmatewalkieonthepersonalaccount"):
+            self.assertTrue(session.called(said), said)
+        for said in ("firstmate", "walkie", "personal", "secondmatewalkiework"):
+            self.assertFalse(session.called(said), said)
 
     async def test_an_event_leaves_the_challenge_alone(self):
         modlink.POLL_HOLD = 0.01

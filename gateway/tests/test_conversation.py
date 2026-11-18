@@ -686,7 +686,7 @@ class ConversationTest(unittest.IsolatedAsyncioTestCase):
     def two_logins(self):
         """The owner's two sessions: Firstmate on the work login, and one in a folder of the same name on the personal one."""
         work, personal = self.link.sessions["7"], self.link.sessions["8"]
-        work.cwd, work.login = "/Users/me/Code/firstmate", "default"
+        work.cwd, work.login = "/Users/me/Code/firstmate", "work"
         personal.cwd, personal.login = "/Users/me/home/firstmate", "personal"
         self.choose("7")
         return work, personal
@@ -700,8 +700,8 @@ class ConversationTest(unittest.IsolatedAsyncioTestCase):
         await self.settle()
         asked = self.asked_switch()
         self.assertEqual(asked["switch"], {"id": "8", "modNonce": "nonce-8"})
-        self.assertEqual(asked["text"], "Switch to firstmate personal?")
-        self.assertEqual(self.phone.said(), [module.SWITCH_IN_APP % "firstmate personal"])
+        self.assertEqual(asked["text"], "Switch to firstmate on the personal account?")
+        self.assertEqual(self.phone.said(), [module.SWITCH_IN_APP % "firstmate on the personal account"])
         self.assertEqual(self.conversation.chosen, "7")
         self.assertEqual(len(self.session.orders), 0)
         self.assertEqual(len(personal.orders), 0)
@@ -719,7 +719,7 @@ class ConversationTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(self.conversation.chosen_run(work))
         self.assertEqual(self.conversation.chosen_run(personal), "run-1")
         await self.settle()
-        self.assertEqual(self.phone.said()[-1], "Connected to firstmate personal.")
+        self.assertEqual(self.phone.said()[-1], "Connected to firstmate on the personal account.")
 
     async def test_prompts_after_a_switch_go_to_the_new_session(self):
         work, personal = self.two_logins()
@@ -771,7 +771,7 @@ class ConversationTest(unittest.IsolatedAsyncioTestCase):
         third.cwd, third.nonce = "/work/walkie-talkie", "nonce-9"
         self.finish_turn("Switch session.")
         await self.settle()
-        self.assertEqual(self.phone.said(), [module.SWITCH_WHICH % "firstmate personal, walkie-talkie"])
+        self.assertEqual(self.phone.said(), [module.SWITCH_WHICH % "firstmate on the personal account, walkie-talkie"])
         self.assertIsNone(self.conversation.confirming)
 
     async def test_with_no_other_session_a_switch_says_so(self):
@@ -786,7 +786,7 @@ class ConversationTest(unittest.IsolatedAsyncioTestCase):
         await self.by_then(lambda: self.phone.said()[-1:] == [module.NOT_SWITCHED % "firstmate"])
         self.assertEqual(self.conversation.chosen, "7")
         self.assertEqual(len(self.link.sessions["8"].orders), 0)
-        self.assertEqual(self.phone.said()[-1], module.NOT_SWITCHED % "firstmate")
+        self.assertEqual(self.phone.said()[-1], module.NOT_SWITCHED % "firstmate on the work account")
 
     async def test_a_bad_signature_switches_nothing(self):
         self.two_logins()
@@ -902,7 +902,7 @@ class ConversationTest(unittest.IsolatedAsyncioTestCase):
         await self.settle()
         asked = self.asked_switch()
         self.assertEqual(asked["switch"], {"id": "8", "modNonce": "nonce-8"})
-        self.assertEqual(asked["text"], "Switch to firstmate personal?")
+        self.assertEqual(asked["text"], "Switch to firstmate on the personal account?")
         self.assertEqual(self.phone.said(), [])
         self.assertEqual(self.tones(), [])
         self.assertEqual(self.conversation.chosen, "7")
@@ -919,7 +919,7 @@ class ConversationTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(self.conversation.chosen_run(work))
         self.assertEqual(self.phone.controls[-1]["chosen"], "8")  # the app's list shows where the call is
         await self.settle()
-        self.assertEqual(self.phone.said(), ["Connected to firstmate personal."])
+        self.assertEqual(self.phone.said(), ["Connected to firstmate on the personal account."])
 
     async def test_declining_a_tapped_switch_switches_nothing(self):
         self.two_logins()

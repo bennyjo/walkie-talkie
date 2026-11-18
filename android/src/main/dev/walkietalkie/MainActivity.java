@@ -37,8 +37,12 @@ import android.widget.TextView;
 import java.io.IOException;
 import java.security.GeneralSecurityException;
 import java.security.Signature;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
+import java.util.TreeMap;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -593,9 +597,7 @@ public class MainActivity extends Activity {
         sessionsHint.setVisibility(View.GONE);
         String pickedId = picked == null ? null : picked.optString("id");
         picked = null;
-        for (int i = 0; i < list.length(); i++) {
-            JSONObject session = list.optJSONObject(i);
-            if (session == null) continue;
+        for (JSONObject session : byLogin(list)) {
             RadioButton option = sessionRow(session);
             if (session.optString("id").equals(pickedId)) {
                 option.setChecked(true);
@@ -614,15 +616,44 @@ public class MainActivity extends Activity {
         }
         sessionsHint.setVisibility(list.length() > 1 ? View.VISIBLE : View.GONE);
         sessionsHint.setText("To switch, choose another session, or say switch session.");
-        for (int i = 0; i < list.length(); i++) {
-            JSONObject session = list.optJSONObject(i);
-            if (session == null) continue;
+        for (JSONObject session : byLogin(list)) {
             RadioButton option = sessionRow(session);
             if (session.optString("id").equals(checkedId)) option.setChecked(true);
             if (session.optString("id").equals(chosenId(TalkService.status))) {
                 picked = session; // so after Stop, Start is one tap away from the session you were on
             }
         }
+    }
+
+    /**
+     * The sessions grouped by login, each group under a heading that names its account, in a fixed order so
+     * a group doesn't move when one of its sessions takes a prompt. Within a group, the Mac's order: the
+     * latest prompt first. A login with no name comes last. With no named login at all, no headings.
+     */
+    private List<JSONObject> byLogin(JSONArray list) {
+        TreeMap<String, List<JSONObject>> groups = new TreeMap<>((a, b) ->
+                a.isEmpty() != b.isEmpty() ? (a.isEmpty() ? 1 : -1) : a.compareToIgnoreCase(b));
+        for (int i = 0; i < list.length(); i++) {
+            JSONObject session = list.optJSONObject(i);
+            if (session != null) groups.computeIfAbsent(session.optString("login"), k -> new ArrayList<>()).add(session);
+        }
+        boolean headed = groups.size() > 1 || (groups.size() == 1 && !groups.firstKey().isEmpty());
+        List<JSONObject> rows = new ArrayList<>();
+        for (Map.Entry<String, List<JSONObject>> group : groups.entrySet()) {
+            if (headed) sessionsGroup.addView(groupHeading(group.getKey()));
+            rows.addAll(group.getValue());
+        }
+        return rows;
+    }
+
+    private TextView groupHeading(String login) {
+        TextView heading = text(13);
+        heading.setText(login.isEmpty() ? "Other account"
+                : login.substring(0, 1).toUpperCase(Locale.ROOT) + login.substring(1) + " account");
+        heading.setTypeface(heading.getTypeface(), Typeface.BOLD);
+        heading.setTextColor(getColor(android.R.color.darker_gray));
+        heading.setPadding(0, dp(14), 0, dp(2));
+        return heading;
     }
 
     private RadioButton sessionRow(JSONObject session) {
@@ -662,18 +693,22 @@ public class MainActivity extends Activity {
         }
     }
 
+    /** The session's name as the Mac says and shows it everywhere, account included: "firstmate on the work account". */
     static String rowName(JSONObject session) {
-        return session.optString("name") + "  " + session.optString("session");
+        String label = session.optString("label");
+        return label.isEmpty() ? session.optString("name") : label;
     }
 
     /**
-     * The name, and under it in smaller, quieter text, where the folder is, then the login and when the
-     * session last took a prompt. So two folders of one name, or one folder on two logins, differ.
+     * The name, and under it in smaller, quieter text, where the folder is, then when the session last took a
+     * prompt and its short id. The account is the group's heading. So two sessions of one name differ.
      */
     private CharSequence rowText(JSONObject session) {
-        String when = join(" \u00b7 ", login(session), ago(session));
+        String id = session.optString("session");
+        String when = join(" \u00b7 ", ago(session), id.isEmpty() ? "" : "session " + id);
         String quiet = join("\n", session.optString("where"), when);
-        return quiet.isEmpty() ? rowName(session) : withQuietLine(rowName(session), quiet);
+        String name = session.optString("name");
+        return quiet.isEmpty() ? name : withQuietLine(name, quiet);
     }
 
     private static String join(String between, String... parts) {
@@ -684,11 +719,6 @@ public class MainActivity extends Activity {
             text.append(part);
         }
         return text.toString();
-    }
-
-    private static String login(JSONObject session) {
-        String login = session.optString("login");
-        return login.isEmpty() ? "" : login + " login";
     }
 
     private CharSequence withQuietLine(String first, String second) {

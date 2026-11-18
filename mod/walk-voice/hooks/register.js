@@ -72,7 +72,8 @@ export const SPOKEN_EARLY = `This message was spoken before your last reply fini
 let socket = null // the gateway's socket, null while this session stays inert
 let stateDir = null // the gateway's folder, which holds its socket and the phone's public key
 let deny = [] // folder names whose sessions never connect
-let loginName = '' // a short name for this session's login, which the phone shows beside its folder
+let loginName = '' // a short name for this session's login, which heads its group in the phone's list
+let folderLabel = '' // what the folder declares itself to be, such as "secondmate walkie", or '' for its name
 let instance = null // this process, stable across /clear and reloads
 let chosen = false // the phone chose this session, and this mod checked the fingerprint that did
 let heardChosen = false // what the gateway last said, which is no grant on its own
@@ -229,8 +230,25 @@ async function folderAllowed($) {
   } else {
     denied = false
     shownCwd = cwd
+    folderLabel = await labelOf($, cwd)
   }
   return !denied
+}
+
+// A Firstmate secondmate home says which secondmate it is in its own marker file, one line with its
+// id. A main Firstmate home has none, and goes by its folder's name. A link, a malformed id, or a
+// denied one is no label.
+async function labelOf($, cwd) {
+  const marker = `${cwd.replace(/\/+$/, '')}/.fm-secondmate-home`
+  try {
+    const stat = await $.fs.stat(marker)
+    if (stat.isLink || stat.kind !== 'file' || stat.size > 256) return ''
+    const id = (await $.fs.read(marker)).split('\n')[0].replace(/\s+/g, '')
+    if (!/^[A-Za-z0-9._-]{1,40}$/.test(id) || deny.includes(id.toLowerCase())) return ''
+    return `secondmate ${id}`
+  } catch {
+    return ''
+  }
 }
 
 function forgetOwnerTurns() {
@@ -297,6 +315,7 @@ async function pollOnce($) {
       nonce,
       promptedAt,
       login: loginName,
+      label: folderLabel,
       role: isDesk ? 'front-desk' : undefined,
     })
     if (!response.ok) throw new Error(`status ${response.status}`)
@@ -496,14 +515,16 @@ async function allowedHere($) {
   const here = login && Object.hasOwn(logins, login) ? logins[login] : null
   if (!here || !Array.isArray(here.deny)) return false
   deny = [...config.deny, ...here.deny].filter((name) => typeof name === 'string' && name).map((name) => name.toLowerCase())
-  loginName = await nameOfLogin($, home, login)
+  loginName = await nameOfLogin($, home, login, here.name)
   return true
 }
 
-// The login's folder, short: "default" for ~/.claude, and "personal" for ~/.claude-personal. Like a
-// folder, a login whose path holds a denied name goes unnamed.
-async function nameOfLogin($, home, login) {
+// The name the install gave the login, such as "work", or else its folder's, short: "default" for
+// ~/.claude, and "personal" for ~/.claude-personal. Like a folder, a login whose path or name holds a
+// denied name goes unnamed.
+async function nameOfLogin($, home, login, given) {
   if (login.toLowerCase().split('/').some((part) => deny.includes(part))) return ''
+  if (typeof given === 'string' && given.trim()) return deny.includes(given.trim().toLowerCase()) ? '' : given.trim()
   if (login === (await realPath($, `${home}/.claude`))) return 'default'
   return login.split('/').pop().replace(/^\./, '').replace(/^claude-/, '')
 }

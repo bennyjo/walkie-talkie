@@ -10,7 +10,8 @@ rules come from running the mod against a stub:
 - An order whose write fails goes back in the queue, because that poll was already dead.
 
 Each poll also carries the session's own challenge, which a fingerprint on the phone signs
-to choose it, when it last took a prompt, and a short name for its login. A session with no challenge is a mod from before
+to choose it, when it last took a prompt, a short name for its login, and what its folder declares
+itself to be, such as a Firstmate secondmate. A session with no challenge is a mod from before
 fingerprints, which can't check a choice, so the phone never sees it. Each answer to the chosen
 session names the run the fingerprint approved, and the mod keeps its grant only while answers do.
 So something that answers on the socket without having asked this gateway can't ride a grant.
@@ -27,12 +28,15 @@ import os
 import socket
 import time
 
+from .text import compact
+
 log = logging.getLogger("walkie.mod")
 
 POLL_HOLD = 25
 SESSION_STALE = 35      # seconds with no poll before a session counts as gone
 MAX_BODY = 1 << 20
 MAX_LOGIN = 40          # characters of a login's name the phone shows
+MAX_LABEL = 60          # characters of a folder's own label the phone shows
 
 
 class Session:
@@ -49,25 +53,34 @@ class Session:
         self.front_desk = False     # takes spoken prompts for another session, which does the work
         self.nonce = ""             # the session's own challenge, which the phone signs to choose it
         self.prompted_at = 0        # when it last took a prompt, in ms since the epoch, 0 if never
-        self.login = ""             # a short name for its login, such as "default" or "personal"
+        self.login = ""             # a short name for its login, such as "work" or "personal"
+        self.label = ""             # what its folder declares itself to be, such as "secondmate walkie"
+
+    @property
+    def title(self):
+        """Which session it is, within its login: the folder's own label, or else the folder's name."""
+        return self.label or os.path.basename(self.cwd.rstrip("/")) or self.cwd
 
     @property
     def name(self):
-        """What you hear and say for it: the folder, then the login unless it's the default, as "firstmate personal"."""
-        folder = os.path.basename(self.cwd.rstrip("/")) or self.cwd
-        return " ".join(part for part in (folder, "" if self.login == "default" else self.login) if part)
+        """What you hear, see and say for it, the same everywhere: "secondmate walkie on the personal account"."""
+        return "%s on the %s account" % (self.title, self.login) if self.login else self.title
+
+    def called(self, target):
+        """Whether a spoken name, run together, names it: its title alone, or with its login, as "firstmate personal"."""
+        return target in (compact(self.title), compact(self.title + self.login), compact(self.name))
 
     def describe(self, now_ms, home=None):
-        """What the phone shows. Two sessions in folders of the same name differ by where, and one folder open
-        on two logins differs by login. The mod sends only a folder it may name, so its parents may be named too."""
+        """What the phone shows. The phone groups sessions by login, and two sessions of one title differ by where.
+        The mod sends only a folder it may name, so its parents may be named too."""
         cwd = self.cwd.rstrip("/")
-        name = os.path.basename(cwd) or self.cwd
-        where = os.path.dirname(cwd) if name != self.cwd else ""
+        folder = os.path.basename(cwd) or self.cwd
+        where = os.path.dirname(cwd) if folder != self.cwd else ""
         home = (home if home is not None else os.path.expanduser("~")).rstrip("/")
         if home and (where == home or where.startswith(home + "/")):
             where = "~" + where[len(home):]
         ago = max(0, round((now_ms - self.prompted_at) / 1000)) if self.prompted_at else None
-        return {"id": self.instance, "name": name, "where": where, "login": self.login,
+        return {"id": self.instance, "name": self.title, "label": self.name, "where": where, "login": self.login,
                 "session": self.session_id[:8], "nonce": self.nonce, "ago": ago}
 
     def wake(self):
@@ -169,10 +182,11 @@ class ModLink:
         session.front_desk = body.get("role") == "front-desk"
         nonce, prompted_at = str(body.get("nonce") or ""), body.get("promptedAt") or 0
         login = str(body.get("login") or "")[:MAX_LOGIN]
+        label = " ".join(str(body.get("label") or "").split())[:MAX_LABEL]
         if not isinstance(prompted_at, (int, float)):
             prompted_at = 0
-        if nonce != session.nonce or prompted_at != session.prompted_at or login != session.login:
-            session.nonce, session.prompted_at, session.login = nonce, prompted_at, login
+        if (nonce, prompted_at, login, label) != (session.nonce, session.prompted_at, session.login, session.label):
+            session.nonce, session.prompted_at, session.login, session.label = nonce, prompted_at, login, label
             self.conversation.sessions_changed()
         session.poll_id += 1
         mine = session.poll_id

@@ -87,6 +87,24 @@ class InstallTest(unittest.TestCase):
         self.assertIn("Denied on every login: 2 names.", out)
         self.assertNotIn("secret", out)
 
+    def test_a_named_login_keeps_its_name_across_installs_until_renamed(self):
+        code, out = run("install", "--login", self.work, "--login", self.personal, "--name-login", self.work, "Work")
+        self.assertEqual(code, 0)
+        self.assertEqual(self.config()["logins"], {self.work: {"deny": [], "name": "Work"}, self.personal: {"deny": []}})
+        self.assertIn('  %s, named "Work", with 0 names of its own denied.' % self.work, out)
+        run("install")
+        self.assertEqual(self.config()["logins"][self.work], {"deny": [], "name": "Work"})
+        run("install", "--name-login", self.work, "  day   job ")
+        self.assertEqual(self.config()["logins"][self.work]["name"], "day job")
+
+    def test_a_login_name_must_be_short_plain_text_for_an_installed_login(self):
+        for name in ("", "x" * 41, "work/home", "-work", "w\u00f6rk"):
+            with self.assertRaises(SystemExit, msg=name):
+                run("install", "--login", self.work, "--name-login", self.work, name)
+        with self.assertRaises(SystemExit):
+            run("install", "--login", self.work, "--name-login", self.personal, "personal")
+        self.assertFalse(os.path.exists(security.connect_config_path()))
+
     def test_a_login_left_out_of_a_later_install_keeps_its_deny_list(self):
         run("install", "--login", self.work, "--login", self.personal, "--deny-on", self.personal, "made-up-employer")
         run("install", "--login", self.work)
