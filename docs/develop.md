@@ -22,7 +22,7 @@ Run these from the repository root.
 
 | Task | Command |
 | --- | --- |
-| Gateway tests, which need no models. Set `WALKIE_TALKIE_MODELS` to also run quiet speech through the real voice detector | `uv run --project gateway python -m unittest discover -s gateway/tests -t gateway` |
+| Gateway tests, which need no models. Set `WALKIE_TALKIE_MODELS` to also run quiet speech through the real voice detector, and Kokoro's voices through the real speaker model | `uv run --project gateway python -m unittest discover -s gateway/tests -t gateway` |
 | Mod tests | `claude plugin test mod/walk-voice` |
 | Mod checks | `claude plugin validate mod/walk-voice` |
 | Phone APK | `android/build.sh` |
@@ -37,14 +37,16 @@ The build needs no Gradle. It downloads a JDK and Android's build tools into `an
 | --- | --- |
 | `gateway/walkie_gateway/phone.py` | The phone's protocol, described at the top of the file, and login |
 | `gateway/walkie_gateway/modlink.py` | The mod's long poll and events |
-| `gateway/walkie_gateway/conversation.py` | Routing, the tap, talking over a reply, pausing, the voice, spoken notices, relayed replies, the spoken yes, and when a call ends |
+| `gateway/walkie_gateway/conversation.py` | Routing, the tap, talking over a reply, pausing, the voice, spoken notices, relayed replies, the spoken yes, the speaker check's decision, and when a call ends |
 | `gateway/walkie_gateway/turns.py` | Speech detection and end-of-speech detection |
 | `gateway/walkie_gateway/text.py` | What of a reply gets read aloud |
-| `gateway/walkie_gateway/speech.py` | Silero, Parakeet, Kokoro, and Opus, and the pace from the talk file's front matter |
+| `gateway/walkie_gateway/speech.py` | Silero, Parakeet, Kokoro, Opus, CAM++ for the speaker check, and the pace from the talk file's front matter |
+| `gateway/walkie_gateway/voiceprint.py` | Enrolling the owner's voice at the Mac, and keeping the voiceprint |
 | `gateway/walkie_gateway/security.py` | Bind rules, the token, pairing, the phone's signatures, and the seal on every frame |
-| `gateway/walkie_gateway/__main__.py` | The `serve`, `install`, and `revoke` commands |
+| `gateway/walkie_gateway/__main__.py` | The `serve`, `install`, `revoke`, and `enroll` commands |
 | `gateway/walkie_gateway/front_desk.py` | The front desk's launcher and settings |
 | `gateway/tools/fake_phone.py` | Stands in for the phone, for testing on the Mac |
+| `gateway/tools/speaker_scores.py` | Summarizes the speaker check's scores from gateway logs, to set its thresholds |
 | `mod/walk-voice/hooks/register.js` | The mod, including which logins and folders may connect, its check of the fingerprint, and the voice rules, with the style part from the talk file |
 | `mod/walk-voice/hooks/p256.js` | The mod's check of a P-256 signature |
 | `mod/walk-voice/hooks/front-desk.js` | The mod's front-desk role and its rules for the model and the primary |

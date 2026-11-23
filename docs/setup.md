@@ -22,6 +22,8 @@ The first command downloads the models and checks their checksums. The second li
 
 The gateway keeps the Mac awake while it runs, and it stops with Ctrl+C. After pairing, start it without `--pair`.
 
+To have the gateway check that messages sound like you, [enroll your voice](usage.md#listen-only-to-your-voice).
+
 ## On the phone
 
 1. Install the APK. Build it with `android/build.sh`, which puts it at `android/out/walkie-talkie.apk`.

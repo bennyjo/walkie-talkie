@@ -13,12 +13,14 @@ import subprocess
 import sys
 import time
 
-from . import security
-from .conversation import Conversation
+from . import security, voiceprint
+from .conversation import SPEAKER_THRESHOLDS, Conversation
 from .front_desk import MOD_DIR
 from .modlink import ModLink
 from .phone import PhoneServer
-from .speech import OpusDecoder, OpusEncoder, Speech, VoiceDetector, default_models_dir, talk_file
+from .speech import OpusDecoder, OpusEncoder, SpeakerCheck, Speech, VoiceDetector, default_models_dir, talk_file
+
+log = logging.getLogger("walkie.gateway")
 
 DEFAULT_PORT = 8791
 MOD_NAME = "walk-voice"
@@ -39,13 +41,25 @@ async def serve(args):
     state_dir = security.private_dir(args.state)
     host = security.check_bind(args.bind) if args.bind else security.tailscale_address()
 
+    owner = voiceprint.load(state_dir, args.models)
+    if owner is None and args.enforce_speaker:
+        raise voiceprint.VoiceprintError("--enforce-speaker needs a voiceprint. Run walkie-gateway enroll first.")
+
     print("Loading the speech models. This takes a few seconds.", flush=True)
     loop = asyncio.get_running_loop()
     speech = await loop.run_in_executor(None, Speech, args.models, args.threads)
+    speaker = None
+    if owner is None:
+        log.info("speaker check off: no voiceprint, so every voice counts. Run walkie-gateway enroll to add one")
+    else:
+        speaker = await loop.run_in_executor(None, SpeakerCheck, args.models, owner)
+        log.info("speaker check on, %s, thresholds %s", "enforcing" if args.enforce_speaker else
+                 "in shadow mode: scores are logged and nothing is refused", ",".join(map(str, args.speaker_thresholds)))
 
     conversation = Conversation(speech, VoiceDetector(args.models), OpusDecoder, OpusEncoder(),
                                 voice_file=os.path.join(state_dir, "voice"), pause_file=os.path.join(state_dir, "paused"),
-                                heard=not args.no_heard, talk_file=talk_file())
+                                heard=not args.no_heard, talk_file=talk_file(), speaker=speaker,
+                                enforce_speaker=args.enforce_speaker, speaker_thresholds=args.speaker_thresholds)
     store = security.PhoneStore(state_dir)
     pairing = security.PairingWindow() if args.pair else None
     phone = PhoneServer(store, conversation, pairing)
@@ -294,6 +308,27 @@ def revoke(state):
     print("To use a phone again, pair it: walkie-gateway serve --pair", flush=True)
 
 
+def enroll(args):
+    if args.remove:
+        if voiceprint.remove(args.state):
+            print("Deleted the voiceprint. Restart the gateway, and it checks no one's voice.", flush=True)
+        else:
+            print("There's no voiceprint in %s." % args.state, flush=True)
+        return
+    device = args.input or voiceprint.choose_input()
+    voiceprint.enroll(args.state, args.models, voiceprint.recorder(device))
+
+
+def _thresholds(text):
+    try:
+        values = tuple(float(part) for part in text.split(","))
+    except ValueError:
+        values = ()
+    if len(values) != 3 or not all(0 < value < 1 for value in values):
+        raise argparse.ArgumentTypeError("give three scores between 0 and 1, such as 0.35,0.42,0.50")
+    return values
+
+
 ANSWER_SECONDS = 5      # a running gateway answers at once
 STOP_SECONDS = 3        # how long a stuck gateway gets to stop before it's killed
 LOCAL_PEERPID = 2       # macOS: getsockopt(SOL_LOCAL, LOCAL_PEERPID) on a Unix socket
@@ -364,6 +399,18 @@ def main(argv=None):
     run.add_argument("--threads", type=int, default=4, help="threads for each speech model")
     run.add_argument("--no-heard", action="store_true", help="don't say a thinking word when a message reaches the "
                                                           "session, or play the warning tone when it can't")
+    run.add_argument("--enforce-speaker", action="store_true",
+                     help="drop messages that don't sound like the enrolled voice; without it, the speaker check "
+                          "only logs each message's score")
+    run.add_argument("--speaker-thresholds", type=_thresholds, default=SPEAKER_THRESHOLDS, metavar="SHORT,MEDIUM,LONG",
+                     help="the score a message needs with under 1.5 s of speech, under 3 s, and 3 s or more "
+                          "(default: %s)" % ",".join("%.2f" % t for t in SPEAKER_THRESHOLDS))
+    voice = commands.add_parser("enroll", help="record your voice at the Mac for the speaker check, or delete it")
+    voice.add_argument("--remove", action="store_true", help="delete the voiceprint")
+    voice.add_argument("--input", help="the Mac's audio input to record from, by number or name; "
+                                       "without it, the inputs are listed to choose from")
+    voice.add_argument("--state", default=security.default_state_dir(), help="the gateway's private folder")
+    voice.add_argument("--models", default=default_models_dir(), help="folder that holds the speech models")
     lost = commands.add_parser("revoke", help="stop trusting the paired phone, at once: for a lost or stolen phone")
     lost.add_argument("--state", default=security.default_state_dir(), help="the gateway's private folder")
     setup = commands.add_parser("install", help="install the mod into the logins you name, and say which may connect")
@@ -390,6 +437,16 @@ def main(argv=None):
         return 0
     if args.command == "install":
         install(args.login, args.deny, args.deny_on, args.remove_login, args.allow, args.allow_on, args.name_login)
+        return 0
+    if args.command == "enroll":
+        try:
+            enroll(args)
+        except (voiceprint.VoiceprintError, security.SecurityError, FileNotFoundError) as e:
+            print(e, file=sys.stderr)
+            return 1
+        except (KeyboardInterrupt, EOFError):
+            print("\nStopped. Nothing was saved.", file=sys.stderr)
+            return 1
         return 0
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s", stream=sys.stderr)

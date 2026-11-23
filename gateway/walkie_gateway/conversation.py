@@ -64,6 +64,15 @@ the signature checks out does the other session take the grant, and the one befo
 let go as at Stop. A spoken switch alone moves nothing, and a name that matches no
 session goes through as an ordinary prompt. Tapping another session in the app's
 list asks for the same fingerprint, with no spoken notice, since the app is open.
+
+With a voiceprint enrolled, each message is scored against it, beside its transcription.
+Anything that grants, such as a prompt, a yes, or "type it", has to score at least the
+threshold for its length, because short speech scores lower for everyone. The words that
+only stop or decline ("cancel", "no", "pause") aren't checked, so they work in any wind,
+and neither is a switch, which the fingerprint gates. In shadow mode, the default, the
+scores are only logged. Enforcing, a message that fails is dropped with the warn tone and
+VOICE_REFUSED, so the owner says it again. It's a filter, not a lock: a recording of the
+owner, or a voice close enough to theirs, can pass.
 """
 import asyncio
 import collections
@@ -110,6 +119,11 @@ PHONE_LOST_SECONDS = 120    # the phone has been gone this long: its run ends, s
 IDLE_SECONDS = 30 * 60      # nothing said or heard for this long: the run ends
 ENDED_AFTER_SECONDS = 6     # time to speak why a run ended, before the phone stops
 NOTICE_TONE_SECONDS = 0.18  # the phone's notice tone, which it plays in line with the speech, ahead of each notice
+# The speaker check's thresholds, by seconds of speech in the message: under 1.5 s, under 3 s, and longer.
+# Set from about 1% of strangers' messages passing, in a lab with 40 speakers through the phone's Opus link.
+SPEAKER_THRESHOLDS = (0.35, 0.42, 0.50)
+SPEAKER_LENGTHS = (1.5, 3.0)
+UNCHECKED = ("cancel", "no", "pause")  # they only stop or decline
 
 
 class Notice(str):
@@ -133,6 +147,7 @@ CONNECTED = "Connected to %s."  # never logged: it holds a folder's name
 SESSION_CLOSED = Notice("session-closed", "That session ended the call. Tap Start in the app to connect again.")
 IDLE_ENDED = Notice("idle-ended", "Nothing was said for 30 minutes, so I ended the call.")
 HUNG_UP = Notice("hung-up", "Hanging up.")
+VOICE_REFUSED = Notice("voice-refused", "Didn't catch your voice. Say it again.")
 CANCELLED = Notice("cancelled", "Cancelled.")
 DESK_CANCELLED = Notice("desk-cancelled", "Stopped what was waiting. Anything already filed still stands.")
 NOT_SENT = Notice("not-sent", "I couldn't send that to the session.")
@@ -191,6 +206,14 @@ class Relayed:
         self.spoken = " ".join(units)
 
 
+def speaker_threshold(seconds, thresholds=SPEAKER_THRESHOLDS):
+    """The score a message with this much speech needs."""
+    for limit, threshold in zip(SPEAKER_LENGTHS, thresholds):
+        if seconds < limit:
+            return threshold
+    return thresholds[-1]
+
+
 class Metrics:
     """One spoken message's timings, in milliseconds after the last voiced audio, so marks made
     before that are negative. Never any words.
@@ -231,17 +254,22 @@ def is_state_notice(unit):
 
 class Conversation:
     def __init__(self, speech, is_speech, new_decoder, encoder, clock=time.monotonic, voice_file=None, pause_file=None,
-                 heard=True, talk_file=None):
+                 heard=True, talk_file=None, speaker=None, enforce_speaker=False, speaker_thresholds=SPEAKER_THRESHOLDS):
         self.speech = speech
         self.new_decoder = new_decoder
         self.encoder = encoder
         self.clock = clock
         self.phone = None           # set once the phone server exists
         self.modlink = None         # set once the mod link exists
+        self.speaker = speaker      # a SpeakerCheck with the owner's voiceprint, or None: no check
+        self.enforce_speaker = enforce_speaker  # otherwise shadow mode: scores are logged, nothing is refused
+        self.speaker_thresholds = speaker_thresholds
         self.decoder = new_decoder()
-        self.detector = TurnDetector(is_speech, self._transcribe, self._turn_finished, clock, self._missed_start)
+        self.detector = TurnDetector(is_speech, self._transcribe, self._turn_finished, clock, self._missed_start,
+                                     self._score_voice if speaker else None)
         self.stt_pool = concurrent.futures.ThreadPoolExecutor(1, thread_name_prefix="stt")
         self.tts_pool = concurrent.futures.ThreadPoolExecutor(1, thread_name_prefix="tts")
+        self.speaker_pool = concurrent.futures.ThreadPoolExecutor(1, thread_name_prefix="speaker")
         self.chosen = None          # the instance of the chosen session
         self.gen = 1                # speech of an earlier generation was cut off
         self.say_queue = collections.deque()
@@ -292,6 +320,7 @@ class Conversation:
             task.cancel()
         self.stt_pool.shutdown(wait=False, cancel_futures=True)
         self.tts_pool.shutdown(wait=False, cancel_futures=True)
+        self.speaker_pool.shutdown(wait=False, cancel_futures=True)
 
     # --- from the phone ----------------------------------------------------------
 
@@ -625,7 +654,15 @@ class Conversation:
     async def _transcribe(self, audio):
         return await asyncio.get_running_loop().run_in_executor(self.stt_pool, self.speech.transcribe, audio)
 
-    def _turn_finished(self, text, last_voice, longest_pause=0.0):
+    async def _score_voice(self, audio):
+        """How close the voice is to the owner's, or None if the check failed, which counts as a fail."""
+        try:
+            return await asyncio.get_running_loop().run_in_executor(self.speaker_pool, self.speaker.score, audio)
+        except Exception:  # so a fault here refuses the message, instead of losing it unheard
+            log.exception("the speaker check failed")
+            return None
+
+    def _turn_finished(self, text, last_voice, longest_pause=0.0, voice_score=None, speech_seconds=0.0):
         text = sanitize_prompt(text)
         what = kind(text)
         if self.hold:  # it ended without ever counting as the owner
@@ -640,6 +677,8 @@ class Conversation:
                 self._set_paused(False)
             return
         if what == "noise":
+            return
+        if self._voice_refused(what, text, voice_score, speech_seconds):
             return
         if self.detector.finished_level is not None:
             self.owner_level = self.detector.finished_level
@@ -694,6 +733,42 @@ class Conversation:
         order = self._send_order(session, "submit", text, unheard, over_a_reply)
         self.prompt_metrics[order] = metrics
         asyncio.get_running_loop().call_later(ORDER_WAIT_SECONDS, self._check_order, order)
+
+    def _voice_refused(self, what, text, score, seconds):
+        """Whether the speaker check drops this message. Before anything else it could change, so a refused
+        message leaves the owner's level, a yes waiting, and an offer to type as they were.
+
+        Every score is logged, with the message's kind and length and never its words, so a week in
+        shadow mode shows where the owner's own messages score.
+        """
+        if self.speaker is None:
+            return False
+        if what in UNCHECKED or self._is_switch(text):
+            threshold, outcome = None, "unchecked"
+        else:
+            threshold = speaker_threshold(seconds, self.speaker_thresholds)
+            if score is not None and score >= threshold:
+                outcome = "pass"
+            else:
+                outcome = "refused" if self.enforce_speaker else "would-refuse"
+        log.info("speaker %s", json.dumps({
+            "kind": "switch" if what == "prompt" and outcome == "unchecked" else what,
+            "score": None if score is None else round(score, 3),
+            "seconds": round(seconds, 2),
+            "threshold": threshold,
+            "outcome": outcome,
+        }))
+        if outcome != "refused":
+            return False
+        self._tone("warn")
+        self.say(VOICE_REFUSED)
+        return True
+
+    def _is_switch(self, text):
+        """A spoken switch that a fingerprint will gate, rather than a prompt that happens to start "switch to"."""
+        target = switch_target(text)
+        session = self._chosen_session()
+        return target is not None and session is not None and self._switch_choices(session, target) is not None
 
     def _set_paused(self, paused):
         """Pausing and resuming are messages, so they leave nothing to say yes to."""
@@ -754,19 +829,12 @@ class Conversation:
         A name that matches no session isn't a switch, so "switch to the main branch" goes to the session as a prompt.
         Nor is the name of the session you're on, so "switch to main" still reaches a session in a folder called main.
         """
-        listed = [s for s in self.modlink.sessions.values() if s.nonce]
-        if target:
-            matches = [s for s in listed if s.called(target)]
-            if not matches:
-                return False
-            matches = [s for s in matches if s is not session]
-            if not matches:
-                return False
-        else:
-            matches = [s for s in listed if s is not session]
-            if not matches:
-                self.say(NO_OTHER_SESSION)
-                return True
+        matches = self._switch_choices(session, target)
+        if matches is None:
+            return False
+        if not matches:
+            self.say(NO_OTHER_SESSION)
+            return True
         if len(matches) > 1:
             self._notice("switch-which", SWITCH_WHICH % ", ".join(sorted(s.name for s in matches)))
             return True
@@ -774,6 +842,13 @@ class Conversation:
         switch = self._ask_switch(matches[0])
         self._notice("switch-in-app", SWITCH_IN_APP % switch.name)
         return True
+
+    def _switch_choices(self, session, target):
+        """The other sessions a spoken switch could mean, or None if it isn't a switch and goes as a prompt."""
+        listed = [s for s in self.modlink.sessions.values() if s.nonce and s is not session]
+        if not target:
+            return listed
+        return [s for s in listed if s.called(target)] or None
 
     def _tapped_switch(self, instance):
         """Another session tapped in the app's list. The app is open, so it asks for the fingerprint straight away."""

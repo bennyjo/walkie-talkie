@@ -70,6 +70,7 @@ class Harness:
         self.text = text
         self.turns = []
         self.pauses = []
+        self.voices = []
         self.transcribed = 0
         self.audio = None
         self.warned = 0
@@ -84,9 +85,10 @@ class Harness:
         self.audio = audio
         return self.text
 
-    def _turn(self, text, last_voice, longest_pause):
+    def _turn(self, text, last_voice, longest_pause, voice_score, speech_seconds):
         self.turns.append(text)
         self.pauses.append(longest_pause)
+        self.voices.append((voice_score, speech_seconds))
 
     async def play(self, windows, seconds, ignored=False):
         for _ in range(int(seconds / SECONDS)):
@@ -105,6 +107,29 @@ class TurnDetectorTest(unittest.IsolatedAsyncioTestCase):
         await h.play(QUIET, 0.2)
         self.assertEqual(h.turns, ["hello there"])
         self.assertFalse(h.detector.talking)
+
+    async def test_the_voice_is_scored_beside_the_words_and_its_length_travels_with_them(self):
+        h = Harness()
+        scored = []
+
+        async def score(audio):
+            scored.append(audio)
+            return 0.7
+        h.detector.score_voice = score
+        await h.play(QUIET, 1.5)
+        await h.play(LOUD, 1)
+        await h.play(QUIET, END_HOLD + 0.2)
+        self.assertEqual(h.turns, ["hello there"])
+        self.assertIs(scored[0], h.audio, "the same audio as the words")
+        self.assertEqual(h.voices[0][0], 0.7)
+        self.assertAlmostEqual(h.voices[0][1], 1.0, delta=0.1)
+
+    async def test_without_a_speaker_check_there_is_no_score(self):
+        h = Harness()
+        await h.play(QUIET, 1.5)
+        await h.play(LOUD, 1)
+        await h.play(QUIET, END_HOLD + 0.2)
+        self.assertIsNone(h.voices[0][0])
 
     async def test_a_natural_pause_does_not_end_a_message(self):
         h = Harness()
