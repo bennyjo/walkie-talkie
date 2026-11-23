@@ -201,7 +201,7 @@ public class TalkService extends Service implements GatewayLink.Listener, Speake
             @Override public void abandon() {
                 audio.abandonAudioFocusRequest(request);
             }
-        });
+        }, SystemClock::elapsedRealtime);
         speaker = new SpeakerPipe(this);
         mic = new MicPipe(this, link, speaker, this);
         try {

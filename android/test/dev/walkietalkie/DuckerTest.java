@@ -21,66 +21,97 @@ public final class DuckerTest {
         }
     }
 
+    private static final class Clock {
+        long now;
+    }
+
+    private final Fake f = new Fake();
+    private final Clock clock = new Clock();
+    private final Ducker d = new Ducker(f, () -> clock.now);
+
+    /** One frame of silence on both threads, {@code ms} after the last. */
+    private void quietFor(long ms) {
+        clock.now += ms;
+        d.setReply(false);
+        d.setSpeech(false);
+    }
+
     public static void main(String[] args) {
-        nothingIsRequestedWhileQuiet();
-        aReplyHoldsFocusOnceAndReleasesItAtTheEnd();
-        speechHoldsFocusOnItsOwn();
-        focusSurvivesOneEndingWhileTheOtherContinues();
-        repeatedSignalsDoNotRequestAgain();
-        closeReleasesWhateverIsHeldAndStaysReleased();
-        closeWhileQuietDoesNothing();
+        new DuckerTest().nothingIsRequestedWhileQuiet();
+        new DuckerTest().aReplyHoldsFocusOnceAndReleasesItAfterTheHold();
+        new DuckerTest().speechHoldsFocusOnItsOwn();
+        new DuckerTest().focusSurvivesOneEndingWhileTheOtherContinues();
+        new DuckerTest().repeatedSignalsDoNotRequestAgain();
+        new DuckerTest().aGapShorterThanTheHoldKeepsFocus();
+        new DuckerTest().aGapLongerThanTheHoldReleasesFocus();
+        new DuckerTest().closeReleasesWhateverIsHeldAndStaysReleased();
+        new DuckerTest().closeDuringTheHoldReleasesAtOnce();
+        new DuckerTest().closeWhileQuietDoesNothing();
         System.out.println("DuckerTest: " + checks + " checks passed");
     }
 
-    private static void nothingIsRequestedWhileQuiet() {
-        Fake f = new Fake();
-        Ducker d = new Ducker(f);
-        d.setReply(false);
-        d.setSpeech(false);
+    private void nothingIsRequestedWhileQuiet() {
+        quietFor(0);
+        quietFor(Ducker.HOLD_MS * 2);
         check(f.requests == 0 && f.abandons == 0, "quiet asks for nothing");
     }
 
-    private static void aReplyHoldsFocusOnceAndReleasesItAtTheEnd() {
-        Fake f = new Fake();
-        Ducker d = new Ducker(f);
+    private void aReplyHoldsFocusOnceAndReleasesItAfterTheHold() {
         d.setReply(true);
         check(f.requests == 1 && f.held(), "a reply takes focus");
-        d.setReply(false);
-        check(f.abandons == 1 && !f.held(), "the end of the reply gives it back");
+        quietFor(0);
+        check(f.held(), "the end of the reply keeps focus for the hold");
+        quietFor(Ducker.HOLD_MS);
+        check(f.abandons == 1 && !f.held(), "the hold ending gives it back");
     }
 
-    private static void speechHoldsFocusOnItsOwn() {
-        Fake f = new Fake();
-        Ducker d = new Ducker(f);
+    private void speechHoldsFocusOnItsOwn() {
         d.setSpeech(true);
         check(f.held(), "speech takes focus");
-        d.setSpeech(false);
-        check(!f.held() && f.requests == 1 && f.abandons == 1, "the end of speech gives it back");
+        quietFor(0);
+        quietFor(Ducker.HOLD_MS);
+        check(!f.held() && f.requests == 1 && f.abandons == 1, "the end of speech gives it back after the hold");
     }
 
-    private static void focusSurvivesOneEndingWhileTheOtherContinues() {
-        Fake f = new Fake();
-        Ducker d = new Ducker(f);
+    private void focusSurvivesOneEndingWhileTheOtherContinues() {
         d.setReply(true);
         d.setSpeech(true);
-        d.setReply(false);
-        check(f.held() && f.requests == 1, "speech over the end of the reply keeps focus, with no second request");
-        d.setSpeech(false);
-        check(!f.held() && f.abandons == 1, "focus goes when both have ended");
+        for (int i = 0; i < 10; i++) {
+            clock.now += Ducker.HOLD_MS;
+            d.setReply(false);
+            d.setSpeech(true);
+        }
+        check(f.held() && f.requests == 1, "speech long after the end of the reply keeps focus, with no second request");
+        quietFor(0);
+        quietFor(Ducker.HOLD_MS);
+        check(!f.held() && f.abandons == 1, "focus goes when both have been quiet for the hold");
     }
 
-    private static void repeatedSignalsDoNotRequestAgain() {
-        Fake f = new Fake();
-        Ducker d = new Ducker(f);
+    private void repeatedSignalsDoNotRequestAgain() {
         for (int i = 0; i < 100; i++) d.setSpeech(true);
         check(f.requests == 1, "100 frames of speech make one request, requests: " + f.requests);
-        for (int i = 0; i < 100; i++) d.setSpeech(false);
+        for (int i = 0; i < 100; i++) quietFor(Ducker.HOLD_MS);
         check(f.abandons == 1, "and one release, abandons: " + f.abandons);
     }
 
-    private static void closeReleasesWhateverIsHeldAndStaysReleased() {
-        Fake f = new Fake();
-        Ducker d = new Ducker(f);
+    private void aGapShorterThanTheHoldKeepsFocus() {
+        d.setSpeech(true);
+        for (long t = 0; t < Ducker.HOLD_MS - 20; t += 20) quietFor(20);
+        check(f.held(), "a pause just under the hold between speech and the reply keeps focus");
+        clock.now += 20;
+        d.setReply(true);
+        check(f.held() && f.requests == 1 && f.abandons == 0, "the reply arrives with no release and no second request");
+    }
+
+    private void aGapLongerThanTheHoldReleasesFocus() {
+        d.setReply(true);
+        for (long t = 0; t < Ducker.HOLD_MS; t += 20) quietFor(20);
+        check(!f.held() && f.abandons == 1, "a pause of the full hold gives focus back");
+        d.setReply(true);
+        check(f.held() && f.requests == 2, "the next reply takes it again");
+    }
+
+    private void closeReleasesWhateverIsHeldAndStaysReleased() {
         d.setReply(true);
         d.setSpeech(true);
         d.close();
@@ -90,9 +121,15 @@ public final class DuckerTest {
         check(!f.held() && f.requests == 1, "a late signal after close takes nothing");
     }
 
-    private static void closeWhileQuietDoesNothing() {
-        Fake f = new Fake();
-        new Ducker(f).close();
+    private void closeDuringTheHoldReleasesAtOnce() {
+        d.setReply(true);
+        quietFor(0);
+        d.close();
+        check(!f.held() && f.abandons == 1, "close during the hold gives focus back without waiting");
+    }
+
+    private void closeWhileQuietDoesNothing() {
+        d.close();
         check(f.requests == 0 && f.abandons == 0, "close with nothing held abandons nothing");
     }
 
