@@ -46,7 +46,9 @@ A pairing older than security.PAIRING_DAYS gets {"t": "ok", ..., "expired": true
 after the proofs, and nothing more.
 
 Other CONTROL messages, gateway to phone: "sessions", "voices", "tone", "pong",
-"confirm", "ended", "cut" with the generation to drop below, "resume" with a hold's
+"confirm", "ended", "notice" with a generation, which the phone plays as its notice
+tone in line with the speech, so it sounds just before the notice that follows it,
+"cut" with the generation to drop below, "resume" with a hold's
 id and a "leak" flag, and "leak". That flag and that message say the sound behind
 the hold may have been the earbuds. Phone to gateway: "release", "tap", "played",
 "voice", "confirmed", "declined", "ping", and "hold" with an id, which says the
@@ -192,6 +194,12 @@ class PhoneServer:
 
     def send_control(self, obj):
         self._write(control(obj))
+
+    def send_notice_tone(self, gen):
+        """Kept with the speech that follows it, so a resend plays the notice after its tone."""
+        data = control({"t": "notice", "gen": gen})
+        self.sent.append((self.seq + 1, gen, data))
+        self._write(data)
 
     def send_speech(self, gen, packet):
         self.seq += 1

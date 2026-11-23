@@ -97,31 +97,34 @@ To keep some folders off the phone, to set up a front desk, or for everything el
 
 A live session can do anything you can do at its keyboard, so getting into one should be as hard as getting into your bank account. When in doubt, Walkie Talkie does what a banking app does.
 
-To talk to a session, someone needs all of these at once: a device on your tailnet, at the paired phone's address, holding the paired app's secret token, and your fingerprint on that phone's hardware key, for that session, at that Start.
+**Getting in.** To talk to a session, someone needs all of these at once: a device on your tailnet, at the paired phone's address, holding the paired app's secret token, and your fingerprint on that phone's hardware key, for that session, at that Start.
 
-- **A fingerprint at every Start.** The fingerprint unlocks a key in the phone's secure hardware for one signature. Both the gateway and the session check it before the session takes a single spoken prompt. A switch to another session, in the app or by voice, takes a fingerprint the same way.
-- **Calls end on their own.** At **Stop**, after 30 minutes with nothing said, after 2 minutes without the phone, and after four hours at most. The next call takes a new fingerprint.
-- **Private network only.** The gateway listens only on the Mac's Tailscale address, accepts only the one paired phone, and both sides prove they hold the token before any audio flows. The app dials the Mac only through the VPN network: with Tailscale off on the phone, it sends nothing.
+- **A fingerprint at every Start and every switch.** It unlocks a key in the phone's secure hardware for one signature. The gateway and the session both check it before the session takes a spoken prompt.
+- **Private network only.** The gateway listens only on the Mac's Tailscale address, and accepts only the one paired phone. No port faces the internet. The app dials the Mac only through the VPN network, so with Tailscale off on the phone, it sends nothing.
 - **The call is encrypted by the app and the gateway themselves.** Every frame after the login is encrypted and authenticated with a key made for that one connection from the pairing token and both sides' login nonces. Tailscale is a second layer around it, not the only one.
-- **Only the sessions you allow.** The mod connects only on the logins you name, and you can deny folders and repositories so they never show on the phone.
-- **Speech stays on your Mac.** No cloud speech service, crash reporter, or analytics. The gateway never logs audio or words. Claude Code sends your prompts and replies to Anthropic, as it does when you type.
+- **Only the sessions you allow.** The mod connects only on the logins you name, and you can keep folders and repositories off the phone.
+- **Speech stays on your devices.** It's recognized and spoken on your Mac. There's no cloud speech service, crash reporter, or analytics, and nothing you say is logged. Claude Code sends your prompts and replies to Anthropic, as it does when you type.
+- **Calls end.** At Stop, when you say "hang up", the moment the earbuds disconnect, after 30 minutes with nothing said, after 2 minutes without the phone, and after four hours at most. The next call takes a new fingerprint.
+- **The gateway's own words sound different.** Notices such as "Paused." play after a short tone that only the phone makes, in a voice no reply can use. A reply that says "Paused." still sounds like the session.
 
-What this can't stop:
+**Once you're in.** These are the limits. Read them before you rely on this.
 
-- **Spoken words have your keyboard's authority.** Within a call, the session does whatever it would do for a typed prompt, tools included.
-- **The mic is always live, with no wake word.** It can't tell who's speaking, so anyone close enough can become a prompt. Say "pause", or stop the app, when you talk to someone else.
-- **A spoken yes to a session is not a lock.** A session asked to confirm follows a rule, not a check. The fingerprint confirmation at a front desk is a check.
-- **A thief who takes the phone during a call** can talk to that one session only while the earbuds stay connected: the call ends at once when they disconnect, which includes running out of battery, and a new call needs your fingerprint. Say "hang up" to end it yourself. They can't start another call, or switch to another session, without your fingerprint.
-- **Processes running as you on the Mac** can reach the gateway's private folder and talk to a session. Such a process can already type into your terminals.
-- **A compromised Tailscale account** could reach the gateway's port, or put a device between the phone and the Mac. It still couldn't read or change a call, or start one, without the token and your fingerprint. Use two-factor sign-in for Tailscale.
+- **Your voice has your keyboard's authority.** A spoken prompt does whatever a typed one would in that session, tools included. In a session that runs without permission prompts, that's everything. Connect the sessions you'd hand a keyboard to.
+- **The mic can't tell who's speaking.** It's live, with no wake word. Anyone close enough can become a prompt. Say "pause", or stop the app, when you talk to someone else.
+- **A phone taken during a call** can talk to that one session only while your earbuds stay connected. The call ends at once when they disconnect, including when their battery runs out. A thief who stays within radio range of your earbuds can keep talking until you say "hang up", for up to four hours. It can't start another call or switch sessions.
+- **A spoken yes is not a lock.** Only the fingerprint confirmation at a front desk is, and the session that receives it still acts by reading a note.
+- **A compromised Tailscale account** could put a device between the phone and the Mac. It could see that a call is on, and how much is said, and cut it, but it couldn't read a call, add to it, or start one without the token and your fingerprint. Use two-factor sign-in for Tailscale.
+- **Programs running as you on the Mac** can reach the gateway's private folder. They can relabel a session, speak in Claude's voice, or grant themselves a session. Such a program can already type into your terminals.
 
-If you lose your phone, remove it in the [Tailscale admin console](https://login.tailscale.com/admin/machines), then run this on the Mac:
+**If you lose your phone,** remove it in the [Tailscale admin console](https://login.tailscale.com/admin/machines) from any browser. That cuts it off at once, wherever you are. Then run this on the Mac:
 
 ```sh
 uv run --project gateway walkie-gateway revoke
 ```
 
-The full model, including pairing, rate limits, and file permissions, is in [docs/security.md](docs/security.md).
+**Compared with the Claude app's voice mode:** your audio never leaves your own devices, and every call takes a fingerprint, where the app takes a sign-in that lasts for weeks. In exchange, a voice here reaches a session that can run commands on your Mac, where the app's voice mode reaches the tools you've connected to your account. Anthropic is an audited vendor. This is version 0.1.0 by one author, and nobody has audited it.
+
+The full model is in [docs/security.md](docs/security.md).
 
 ## Status
 

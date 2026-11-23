@@ -53,6 +53,8 @@ final class SpeakerPipe implements Runnable {
 
     private final short[] tapTone = tone(440, 0.07, 0.12);
     private final short[] warnTone = concat(tone(300, 0.15, 0.2), new short[RATE / 10], tone(300, 0.15, 0.2));
+    // 0.18 s, the gateway's NOTICE_TONE_SECONDS. Made here, so no reply's words can make it.
+    private final short[] noticeTone = concat(tone(660, 0.06, 0.12), tone(990, 0.06, 0.12), new short[RATE * 6 / 100]);
 
     SpeakerPipe(Listener listener) {
         this.listener = listener;
@@ -198,6 +200,15 @@ final class SpeakerPipe implements Runnable {
 
     void warnTone() {
         tones.add(warnTone);
+    }
+
+    /**
+     * The gateway's own notice comes next. Its tone joins the speech in order, so it plays just
+     * before the notice, and a cut or a hold takes it with the speech.
+     */
+    synchronized void noticeTone(int generation) {
+        lastGeneration = Math.max(lastGeneration, generation);
+        if (generation >= dropBelow) speech.add(noticeTone);
     }
 
     /** One packet from the network thread. */

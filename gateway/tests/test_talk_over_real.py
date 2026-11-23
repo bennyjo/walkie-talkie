@@ -76,6 +76,9 @@ class Stub:
     def forget_speech(self):
         pass
 
+    def send_notice_tone(self, gen):
+        self.send_control({"t": "notice", "gen": gen})
+
     def send_speech(self, gen, packet):
         pass
 
@@ -136,6 +139,9 @@ class Rig:
         elif message["t"] == "confirm" and message["nonce"]:  # the owner's fingerprint in the app
             asyncio.get_running_loop().call_soon(self.conversation.phone_message,
                                                  {"t": "confirmed", "nonce": message["nonce"], "sig": "good"})
+
+    def send_notice_tone(self, gen):
+        self.send_control({"t": "notice", "gen": gen})
 
     def send_speech(self, gen, packet):
         if gen < self.cut_gen:

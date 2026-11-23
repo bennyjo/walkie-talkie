@@ -313,6 +313,25 @@ class PhoneServerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.conversation.new_runs, 2)  # the list-only login, then the started run
         again.close()
 
+    async def test_a_resent_notice_keeps_its_tone(self):
+        phone = Phone(self.port, self.token)
+        await self.start(phone)
+        self.server.send_speech(3, b"reply")
+        self.server.send_notice_tone(3)
+        self.server.send_speech(3, b"paused")
+        for _ in range(3):
+            await phone.read()
+        phone.close()
+        await asyncio.sleep(0.05)
+
+        again = await Phone(self.port, self.token, down=1).connect()  # got the reply, then the line dropped
+        await again.login()
+        kind, payload = await again.read()
+        self.assertEqual((kind, json.loads(payload)), (CONTROL, {"t": "notice", "gen": 3}))
+        kind, payload = await again.read()
+        self.assertEqual((kind, payload[SPEECH_HEADER.size:]), (SPEECH, b"paused"))
+        again.close()
+
     async def test_speech_that_was_cut_off_is_not_resent(self):
         phone = await Phone(self.port, self.token).connect()
         await phone.login()

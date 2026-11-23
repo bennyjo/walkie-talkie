@@ -4,10 +4,17 @@ The filter rules come from walk mode's `clean_line`, `prose_lines`, `speakable`,
 `split_unit`, and `spell_numbers`. Walk mode filters a finished reply. Here the
 reply arrives in small pieces, so `SpeechFilter` keeps the same rules as state
 and hands out each sentence as soon as it's complete.
+
+A reply is untrusted text, and the filter runs on the gateway's one event loop,
+which also carries the tap, Stop, and revoke. So no rule may take more than
+linear time on what it reads, and no pattern sees more than MAX_LINE characters
+at once. A stretch that long with no line or sentence end is something on screen.
 """
+import bisect
 import re
 
 MAX_INPUT = 50000   # characters filtered; replies are far shorter
+MAX_LINE = 2000     # longer with no line or sentence end: code, data, or a trap, never prose to read out
 MAX_CHARS = 1200    # about 80 seconds of speech
 MAX_UNIT = 250      # longest unit sent to the voice at once
 FIRST_UNIT = 60     # the first unit of a reply is cut short, so its first word comes sooner
@@ -71,8 +78,54 @@ def _token(match):
     return LEFT_OUT if mixed else token  # keys and IDs, not long plain words
 
 
+BACKTICKS = re.compile(r"`+")
+ITALIC_OPEN = re.compile(r"(?<![\w*])\*(?!\s)")
+ITALIC_CLOSE = re.compile(r"(?<!\s)\*(?![\w*])")
+EMPTY_BRACKETS = re.compile(r"\(\s*+(?:[,;:]\s*+)?\)")  # possessive, so a long run of spaces is read once
+
+
+def _without_inline_code(line):
+    """Each run of backticks closes at the next run of the same length, as in Markdown. One pass, no backtracking."""
+    runs = [match.span() for match in BACKTICKS.finditer(line)]
+    closer, latest = [None] * len(runs), {}
+    for i in range(len(runs) - 1, -1, -1):
+        length = runs[i][1] - runs[i][0]
+        closer[i], latest[length] = latest.get(length), i
+    out, done, i = [], 0, 0
+    while i < len(runs):
+        j = closer[i]
+        if j is None:  # backticks that open nothing stay as they are
+            i += 1
+            continue
+        out += [line[done:runs[i][0]], LEFT_OUT]
+        done, i = runs[j][1], j + 1
+    return "".join(out) + line[done:]
+
+
+def _without_italics(line):
+    """*words* keeps its words. Each opening star closes at the first star after it that can close.
+
+    If an opening star has no such star after it, no later one does either, so the scan ends there.
+    """
+    closers = [match.start() for match in ITALIC_CLOSE.finditer(line)]
+    out, done = [], 0
+    for match in ITALIC_OPEN.finditer(line):
+        start = match.start()
+        if start < done:
+            continue
+        k = bisect.bisect_left(closers, start + 2)  # at least one character between them
+        if k == len(closers):
+            break
+        end = closers[k]
+        out += [line[done:start], line[start + 1:end]]
+        done = end + 1
+    return "".join(out) + line[done:]
+
+
 def clean_line(line):
-    line = re.sub(r"(`+)(?:(?!\1).)+?\1", LEFT_OUT, line)    # inline code
+    if len(line) > MAX_LINE:
+        return LEFT_OUT
+    line = _without_inline_code(line)
     line = FORMAT_TAG.sub(" ", line)
     line = HTML.sub(LEFT_OUT, line)
     line = re.sub(r"!\[[^\[\]]*\]\([^)]*\)", LEFT_OUT, line)  # images
@@ -93,8 +146,8 @@ def clean_line(line):
     line = re.sub(r"^\s*>\s?", "", line)                      # quotes
     line = re.sub(r"^\s*(?:[-*+]|\d+[.)])\s+", "", line)      # list markers
     line = re.sub(r"(\*\*|__)(.+?)\1", r"\2", line)           # bold
-    line = re.sub(r"(?<![\w*])\*(?!\s)(.+?)(?<!\s)\*(?![\w*])", r"\1", line)  # italics
-    line = re.sub(r"\(\s*[,;:]?\s*\)", "", line)              # emptied brackets
+    line = _without_italics(line)
+    line = EMPTY_BRACKETS.sub("", line)
     line = re.sub(r"\s+", " ", line).strip()
     line = re.sub(r"\s+([,.;:!?])", r"\1", line)
     line = re.sub(r"([,;:])(?=[,.;:!?])", "", line)           # "see , ." -> "see."
@@ -243,6 +296,7 @@ class SpeechFilter:
         self.fence = None
         self.pem = self.traceback = self.icode = self.in_list = self.in_diff = False
         self.prev_blank = True
+        self.skipping = False   # the rest of a line that ran past MAX_LINE: all of it is on screen
         self.seen = 0           # characters received
         self.total = 0          # characters handed out
         self.truncated = False
@@ -256,10 +310,26 @@ class SpeechFilter:
         self.seen += len(text)
         self.pending += text
         out = []
-        while "\n" in self.pending:
-            line, self.pending = self.pending.split("\n", 1)
-            out.extend(self._complete(line))
-        out.extend(self._peel())
+        while True:
+            if self.skipping:
+                end = self.pending.find("\n")
+                if end < 0:
+                    self.pending = ""
+                    break
+                self.pending, self.skipping = self.pending[end + 1:], False
+            end = self.pending.find("\n", 0, MAX_LINE + 1)
+            if end >= 0:
+                line, self.pending = self.pending[:end], self.pending[end + 1:]
+                out.extend(self._complete(line))
+            elif len(self.pending) <= MAX_LINE:
+                break
+            else:  # MAX_LINE characters and no line end: hand out what's finished in them, if anything is
+                peeled = self._peel()
+                if peeled is None:
+                    self._overlong()
+                else:
+                    out.extend(peeled)
+        out.extend(self._peel() or [])
         return out
 
     def finish(self):
@@ -283,19 +353,35 @@ class SpeechFilter:
         return []
 
     def _peel(self):
-        """Hand out the finished sentences of a line that hasn't ended yet."""
-        if not self.midline and not self._may_be_prose(self.pending):
-            return []
-        cuts = list(SENTENCE_END.finditer(self.pending))
-        for cut in reversed(cuts):
-            done = self.pending[:cut.start()]
-            if done.count("`") % 2 == 0:  # never inside inline code
-                if not self.midline:
-                    self._judge(done)
-                    self.midline = True
-                self.pending = self.pending[cut.end():]
-                return self._units(done)
-        return []
+        """Hand out the finished sentences in the first MAX_LINE characters of a line that hasn't ended yet.
+
+        None if no sentence there has finished.
+        """
+        head = self.pending[:MAX_LINE]
+        if not self.midline and not self._may_be_prose(head):
+            return None
+        cut, ticks, counted = None, 0, 0
+        for match in SENTENCE_END.finditer(head):
+            ticks += head.count("`", counted, match.start())
+            counted = match.start()
+            if ticks % 2 == 0:  # never inside inline code
+                cut = match
+        if cut is None:
+            return None
+        done = head[:cut.start()]
+        if not self.midline:
+            self._judge(done)
+            self.midline = True
+        self.pending = self.pending[cut.end():]
+        return self._units(done)
+
+    def _overlong(self):
+        """MAX_LINE characters with no line or sentence end. That line is on screen, to its end."""
+        if not self.midline:
+            self._judge(self.pending[:MAX_LINE])  # what it starts, such as a code block, still counts
+        self.hidden = True
+        self.midline = False
+        self.skipping = True
 
     def _may_be_prose(self, line):
         """A test of how a line starts that changes nothing."""

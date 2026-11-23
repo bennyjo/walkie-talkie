@@ -23,6 +23,7 @@ Every Start takes a fingerprint, and the fingerprint lets the phone talk to that
 | Say only "go", "play", or "start" while paused | Listening starts again, and you hear "Listening." The word never reaches the session. Unless you're paused, these are ordinary words |
 | Hear the warning tone, then why a message didn't reach the session | It couldn't send it, the session didn't pick it up in 10 seconds, or the session was stopped at the keyboard. The words after the tone say which |
 | Hear the warning tone with no words | The connection to the Mac dropped, the mic stopped coming from the receiver, you talked too softly over the end of a reply, or the call ended. The app says which |
+| Hear a short rising tone, then words | That's the gateway speaking, not the session, in its own voice. A reply never comes with that tone |
 | Hear "I lost part of that" | The connection was down for more than the 10 seconds the phone keeps, or the mic stopped coming from the receiver mid-message, so that message was thrown away rather than sent with a hole in it. Say it again |
 | Hear "something on screen" | The reply had code, a path, or something similar there, which isn't read out. Look, or ask what it is. Don't confirm something you haven't heard |
 | Hear "hasn't started that" | The session has your message, but hasn't started it after 10 seconds. A dialog may be open at the keyboard. It runs when the dialog closes, unless you tap or stop the app |
@@ -135,7 +136,9 @@ The app's screen shows the routes, which mic channels carry sound, the round tri
 
 ## Voices
 
-Pick a voice under **Voice** in the app, once you've tapped **Start**. All 11 come with the Kokoro model, the gateway remembers your choice in its state folder, and it takes effect from the next reply.
+Pick a voice under **Voice** in the app, once you've tapped **Start**. All of them come with the Kokoro model, the gateway remembers your choice in its state folder, and it takes effect from the next reply.
+
+The gateway's own notices, such as "Paused." or "It's in the queue.", always speak in Michael's American voice, after a short rising tone from the phone. Replies can't use that voice, so you can always tell a notice from a reply that says the same words. If you'd chosen Michael before, replies go back to the default voice.
 
 ## Troubleshooting
 

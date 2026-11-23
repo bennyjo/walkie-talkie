@@ -79,7 +79,7 @@ import time
 import numpy as np
 
 from . import security
-from .speech import DEFAULT_VOICE, VOICES
+from .speech import DEFAULT_VOICE, NOTICE_VOICE, VOICES
 from .text import LEFT_OUT, SpeechFilter, compact, kind, sanitize_prompt, spoken_words, switch_target, words_of
 from .turns import SECONDS, TurnDetector, speaking_level
 
@@ -109,42 +109,61 @@ PRUNE_SECONDS = 5
 PHONE_LOST_SECONDS = 120    # the phone has been gone this long: its run ends, so nothing stays connected
 IDLE_SECONDS = 30 * 60      # nothing said or heard for this long: the run ends
 ENDED_AFTER_SECONDS = 6     # time to speak why a run ended, before the phone stops
+NOTICE_TONE_SECONDS = 0.18  # the phone's notice tone, which it plays in line with the speech, ahead of each notice
 
-NO_SESSION = "No session is connected. Choose one in the app, and tap Start."
-SESSION_GONE = "That session has gone. Choose another in the app, and tap Start."
+
+class Notice(str):
+    """The gateway's own words, as opposed to a reply's. The log gets its name, never its words.
+
+    A notice speaks in NOTICE_VOICE, which no reply can choose, after a tone that only the phone makes.
+    So a reply that says "Paused." still sounds like the session, not like the gateway.
+    """
+
+    def __new__(cls, name, words):
+        notice = super().__new__(cls, words)
+        notice.name = name
+        return notice
+
+
+NOTICE_TONE = object()  # in the frames, where the phone plays the notice tone
+
+NO_SESSION = Notice("no-session", "No session is connected. Choose one in the app, and tap Start.")
+SESSION_GONE = Notice("session-gone", "That session has gone. Choose another in the app, and tap Start.")
 CONNECTED = "Connected to %s."  # never logged: it holds a folder's name
-SESSION_CLOSED = "That session ended the call. Tap Start in the app to connect again."
-IDLE_ENDED = "Nothing was said for 30 minutes, so I ended the call."
-HUNG_UP = "Hanging up."
-CANCELLED = "Cancelled."
-DESK_CANCELLED = "Stopped what was waiting. Anything already filed still stands."
-NOT_SENT = "I couldn't send that to the session."
-QUEUED = "It's in the queue."
-QUEUE_DROPPED = "Dropped your queued message."
-NOT_REACHED = "I can't reach that session right now. Your message is waiting for it."
-NOT_STARTED = "The session hasn't started that. A dialog may be open at the keyboard."
-LOST_PART = "I lost part of that. Please say it again."
-STOPPED_AT_KEYBOARD = ("This session was stopped at the keyboard, so it won't take a spoken message. "
-                       "Say type it, and I'll type that message into its terminal.")
-LATER_DROPPED = "I dropped the messages queued after it."
-NOTHING_TO_TYPE = "There's nothing waiting to be typed."
-DIALOG_OPEN = "A dialog is open in that session, so I didn't type anything."
-DRAFT_OPEN = "That session has a half-typed draft, so I didn't type anything."
-NO_PANE = "I can't reach that session's terminal, so I didn't type anything."
-PERMISSION = "The session is asking for a permission at the keyboard. Tap to stop the turn."
-TURN_FAILED = "The turn stopped with an error. It's on screen."
-NOTHING_TO_CONFIRM = "Nothing is waiting for a yes, so I sent nothing."
-CONFIRM_IN_APP = "To confirm, open the app and use your fingerprint."
-NOT_CONFIRMED = "Not confirmed, so I sent nothing."
-YES_SENT = "Sent your confirmation."
-YES_NOT_SENT = "I can't tell whether your confirmation was sent. Check before you rely on it."  # the command may have saved it, then failed
-REPLY_NOT_SPOKEN = "I couldn't read a reply aloud."
-NOT_FILED = "I can't tell whether that was filed."  # the command may have saved it, then failed
+SESSION_CLOSED = Notice("session-closed", "That session ended the call. Tap Start in the app to connect again.")
+IDLE_ENDED = Notice("idle-ended", "Nothing was said for 30 minutes, so I ended the call.")
+HUNG_UP = Notice("hung-up", "Hanging up.")
+CANCELLED = Notice("cancelled", "Cancelled.")
+DESK_CANCELLED = Notice("desk-cancelled", "Stopped what was waiting. Anything already filed still stands.")
+NOT_SENT = Notice("not-sent", "I couldn't send that to the session.")
+QUEUED = Notice("queued", "It's in the queue.")
+QUEUE_DROPPED = Notice("queue-dropped", "Dropped your queued message.")
+NOT_REACHED = Notice("not-reached", "I can't reach that session right now. Your message is waiting for it.")
+NOT_STARTED = Notice("not-started", "The session hasn't started that. A dialog may be open at the keyboard.")
+LOST_PART = Notice("lost-part", "I lost part of that. Please say it again.")
+STOPPED_AT_KEYBOARD = Notice("stopped-at-keyboard",
+                             "This session was stopped at the keyboard, so it won't take a spoken message. "
+                             "Say type it, and I'll type that message into its terminal.")
+LATER_DROPPED = Notice("later-dropped", "I dropped the messages queued after it.")
+NOTHING_TO_TYPE = Notice("nothing-to-type", "There's nothing waiting to be typed.")
+DIALOG_OPEN = Notice("dialog-open", "A dialog is open in that session, so I didn't type anything.")
+DRAFT_OPEN = Notice("draft-open", "That session has a half-typed draft, so I didn't type anything.")
+NO_PANE = Notice("no-pane", "I can't reach that session's terminal, so I didn't type anything.")
+PERMISSION = Notice("permission", "The session is asking for a permission at the keyboard. Tap to stop the turn.")
+TURN_FAILED = Notice("turn-failed", "The turn stopped with an error. It's on screen.")
+NOTHING_TO_CONFIRM = Notice("nothing-to-confirm", "Nothing is waiting for a yes, so I sent nothing.")
+CONFIRM_IN_APP = Notice("confirm-in-app", "To confirm, open the app and use your fingerprint.")
+NOT_CONFIRMED = Notice("not-confirmed", "Not confirmed, so I sent nothing.")
+YES_SENT = Notice("yes-sent", "Sent your confirmation.")
+YES_NOT_SENT = Notice("yes-not-sent",  # the command may have saved it, then failed
+                      "I can't tell whether your confirmation was sent. Check before you rely on it.")
+REPLY_NOT_SPOKEN = Notice("reply-not-spoken", "I couldn't read a reply aloud.")
+NOT_FILED = Notice("not-filed", "I can't tell whether that was filed.")  # the command may have saved it, then failed
 # These name sessions, so the log names the notice and never its words.
 SWITCH_IN_APP = "To switch to %s, open the app and use your fingerprint."
 SWITCH_WHICH = "Which session? Say switch to, and one of these: %s."
 NOT_SWITCHED = "Not switched. You're still talking to %s."
-NO_OTHER_SESSION = "There's no other session to switch to."
+NO_OTHER_SESSION = Notice("no-other-session", "There's no other session to switch to.")
 
 
 class Switch:
@@ -156,9 +175,9 @@ class Switch:
 # One of these, at random, says an idle session has the prompt. A busy one says QUEUED instead.
 HEARD_WORDS = ("Working.", "Pondering.", "Thinking.", "Mulling.", "Musing.", "Noodling.", "Cogitating.", "Confabulating.")
 
-PAUSED = "Paused."
-LISTENING = "Listening."
-STILL_PAUSED = "Still paused. Say go to start listening."
+PAUSED = Notice("paused", "Paused.")
+LISTENING = Notice("listening", "Listening.")
+STILL_PAUSED = Notice("still-paused", "Still paused. Say go to start listening.")
 # These go ahead of a reply, because a whole reply can be waiting, and the owner is waiting to know.
 # Only the latest is true, so it replaces any that hasn't gone out, and the last one heard is the current state.
 STATE_NOTICES = {PAUSED, LISTENING, STILL_PAUSED, HUNG_UP}
@@ -170,19 +189,6 @@ class Relayed:
     def __init__(self, note, units, takes_yes):
         self.note, self.units, self.takes_yes, self.expires = note, units, takes_yes, 0.0
         self.spoken = " ".join(units)
-
-
-# What the log may say about a notice: its name, never any words of a prompt or a reply.
-NOTICE_NAMES = {
-    NO_SESSION: "no-session", SESSION_GONE: "session-gone", CANCELLED: "cancelled", DESK_CANCELLED: "desk-cancelled", NOT_SENT: "not-sent",
-    QUEUED: "queued", QUEUE_DROPPED: "queue-dropped", NOT_REACHED: "not-reached", NOT_STARTED: "not-started",
-    LOST_PART: "lost-part", STOPPED_AT_KEYBOARD: "stopped-at-keyboard", LATER_DROPPED: "later-dropped", NOTHING_TO_TYPE: "nothing-to-type", DIALOG_OPEN: "dialog-open",
-    DRAFT_OPEN: "draft-open", NO_PANE: "no-pane", PERMISSION: "permission", TURN_FAILED: "turn-failed",
-    NOTHING_TO_CONFIRM: "nothing-to-confirm", CONFIRM_IN_APP: "confirm-in-app", NOT_CONFIRMED: "not-confirmed",
-    YES_SENT: "yes-sent", YES_NOT_SENT: "yes-not-sent", SESSION_CLOSED: "session-closed", IDLE_ENDED: "idle-ended", HUNG_UP: "hung-up",
-    REPLY_NOT_SPOKEN: "reply-not-spoken", NOT_FILED: "not-filed", NO_OTHER_SESSION: "no-other-session",
-    PAUSED: "paused", LISTENING: "listening", STILL_PAUSED: "still-paused",
-}
 
 
 class Metrics:
@@ -804,8 +810,7 @@ class Conversation:
             self._notice("not-switched", NOT_SWITCHED % session.name)
 
     def _notice(self, name, text):
-        log.info("notice %s", name)
-        self.say(text)
+        self.say(Notice(name, text))
 
     def _confirmed(self, nonce, signature):
         """A fingerprint in the app, over the words the owner heard. Only now does the yes go to the session."""
@@ -850,8 +855,7 @@ class Conversation:
 
     def _delivered(self):
         if self.heard:
-            log.info("notice heard")
-            self.say(random.choice(HEARD_WORDS))
+            self.say(Notice("heard", random.choice(HEARD_WORDS)))
 
     def _not_delivered(self):
         if self.heard:
@@ -934,7 +938,7 @@ class Conversation:
         """Its words go, and the notice takes their place. Its marker stays, so it can't take a yes or leave an older reply able to."""
         relayed.units, relayed.takes_yes = [], False
         self.say_queue = collections.deque(item for item in self.say_queue if item[3] is not relayed)
-        log.info("notice %s", NOTICE_NAMES[REPLY_NOT_SPOKEN])
+        log.info("notice %s", REPLY_NOT_SPOKEN.name)
         self.say_queue.appendleft((REPLY_NOT_SPOKEN, None, None, None))
 
     def _order_result(self, event):
@@ -1043,9 +1047,9 @@ class Conversation:
     # --- speaking ----------------------------------------------------------------
 
     def say(self, text, metrics=None, reply_voice=None, relayed=None):
-        """A reply's words come with the voice its turn began with. A notice uses the current one."""
-        if text in NOTICE_NAMES:
-            log.info("notice %s", NOTICE_NAMES[text])
+        """A reply's words come with the voice its turn began with. Anything else is a notice, in NOTICE_VOICE."""
+        if isinstance(text, Notice):  # never by its words, which a reply can copy
+            log.info("notice %s", text.name)
         unit = (text, metrics, reply_voice, relayed)
         if is_state_notice(unit):
             self._drop_unsent_state_notice()
@@ -1080,7 +1084,7 @@ class Conversation:
             self.synthesizing = unit
             packets = []
             try:
-                packets = await loop.run_in_executor(self.tts_pool, self._synthesize, text, reply_voice or self.voice)
+                packets = await loop.run_in_executor(self.tts_pool, self._synthesize, text, reply_voice or NOTICE_VOICE)
             except Exception:
                 log.exception("synthesis failed")
                 if relayed and self.synthesizing is unit:
@@ -1097,6 +1101,8 @@ class Conversation:
             made = [(packet, metrics, reply_voice is not None,
                      words[i * len(words) // len(packets):(i + 1) * len(words) // len(packets)], relayed, state_notice)
                     for i, packet in enumerate(packets)]
+            if reply_voice is None:
+                made.insert(0, (NOTICE_TONE, None, False, [], None, state_notice))
             if state_notice:
                 self.frames.extendleft(reversed(made))
             else:
@@ -1166,6 +1172,12 @@ class Conversation:
                     if self.frames[0][2] != self.reply_heard and now < self.played_until + OUTPUT_DELAY_SECONDS:
                         break  # a reply and a notice never sound together, so one cut can't take the other
                     self.played_until = max(self.played_until, now)
+                    if self.frames[0][0] is NOTICE_TONE:  # the phone plays it in line, just before the notice
+                        self.frames.popleft()
+                        self.phone.send_notice_tone(self.gen)
+                        self.played_until += NOTICE_TONE_SECONDS
+                        self.reply_heard = False
+                        continue
                     packet, metrics, is_reply, words, relayed, state_notice = self.frames.popleft()
                     self.phone.send_speech(self.gen, packet)
                     self.sounding_relay = relayed
