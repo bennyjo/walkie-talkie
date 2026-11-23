@@ -3,7 +3,7 @@ package dev.walkietalkie;
 /**
  * Whether the pairing form shows. With no pairing it always does, and there is nothing to go back to.
  * With one, the form shows only after Pair again, and Cancel or Back returns to the paired screen.
- * While a Pair attempt is in flight, Cancel and Back stay on the form: the Mac may already have
+ * While a Pair attempt is in flight, Pair, Cancel, and Back do nothing: the Mac may already have
  * replaced its key for this phone, so the attempt's result has to land.
  * Plain Java, so android/build.sh --test runs it.
  */
@@ -20,8 +20,8 @@ final class PairScreen {
         return paired && again;
     }
 
-    /** Cancel works only while no Pair attempt is in flight. */
-    boolean cancelEnabled() {
+    /** Pair and Cancel work only while no Pair attempt is in flight. */
+    boolean idle() {
         return !pairing;
     }
 
@@ -44,9 +44,11 @@ final class PairScreen {
         return cancelShown(paired) && cancel();
     }
 
-    /** A Pair attempt has started. */
-    void pairing() {
+    /** Starts a Pair attempt. Returns false when one is already in flight, so no second one starts. */
+    boolean pairing() {
+        if (pairing) return false;
         pairing = true;
+        return true;
     }
 
     /** The Pair attempt failed, and the old pairing stays. */

@@ -101,11 +101,13 @@ public final class PairSwapTest {
         Phone phone = new Phone().pairedTo("100.64.0.1", "old-token");
         PairScreen screen = new PairScreen();
         screen.pairAgain();
-        screen.pairing();
+        check(screen.idle(), "Pair and Cancel work before an attempt");
+        check(screen.pairing(), "Pair starts an attempt");
         boolean threw = false;
         try {
             PairSwap.run(phone, "100.64.0.2", key -> {
-                check(!screen.cancelEnabled(), "Cancel is disabled while the Mac decides");
+                check(!screen.idle(), "Pair and Cancel are disabled while the Mac decides");
+                check(!screen.pairing(), "a second Pair tap starts no second attempt");
                 check(!screen.cancel(), "Cancel does nothing while the Mac decides");
                 check(screen.cancelShown(phone.paired()), "Back stays with the form while the Mac decides");
                 check(!screen.back(phone.paired()), "Back does nothing while the Mac decides");
@@ -117,7 +119,7 @@ public final class PairSwapTest {
         }
         check(threw, "the failure reaches the screen");
         screen.failed();
-        check(screen.cancelEnabled(), "a failed pair enables Cancel again");
+        check(screen.idle(), "a failed pair enables Pair and Cancel again");
         check(screen.formShown(phone.paired()), "a failed pair stays on the form");
         check(screen.back(phone.paired()), "after a failed pair Back closes the form");
         check(!screen.formShown(phone.paired()), "Back returns to the paired screen");
@@ -125,14 +127,14 @@ public final class PairSwapTest {
                 "the old pairing and key stay");
 
         screen.pairAgain();
-        screen.pairing();
+        check(screen.pairing(), "Pair can start again after a failure");
         PairSwap.run(phone, "100.64.0.2", key -> {
-            check(!screen.cancel() && !screen.back(phone.paired()), "Cancel and Back wait for the Mac");
+            check(!screen.pairing() && !screen.cancel() && !screen.back(phone.paired()), "Pair, Cancel, and Back wait for the Mac");
             return "new-token";
         });
         screen.paired();
         check("100.64.0.2".equals(phone.host) && "new-token".equals(phone.token), "the accepted pairing lands");
-        check(!screen.formShown(phone.paired()) && screen.cancelEnabled(), "the form closes with Cancel enabled again");
+        check(!screen.formShown(phone.paired()) && screen.idle(), "the form closes with Pair and Cancel enabled again");
     }
 
     private static void aSuccessfulPairReplacesThePairingAndItsKey() throws Exception {

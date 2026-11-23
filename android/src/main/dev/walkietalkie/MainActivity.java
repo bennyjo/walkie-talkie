@@ -68,6 +68,7 @@ public class MainActivity extends Activity {
     private final Handler main = new Handler(Looper.getMainLooper());
     private LinearLayout pairSection;
     private LinearLayout pairedSection;
+    private Button pairButton;
     private Button cancelPairButton;
     private final PairScreen pairScreen = new PairScreen();
     private LinearLayout talkSection;
@@ -135,7 +136,8 @@ public class MainActivity extends Activity {
         codeField = field("8-digit pairing code", InputType.TYPE_CLASS_NUMBER);
         pairSection.addView(addressField);
         pairSection.addView(codeField);
-        pairSection.addView(button("Pair", this::pair));
+        pairButton = button("Pair", this::pair);
+        pairSection.addView(pairButton);
         cancelPairButton = button("Cancel", this::cancelPair);
         pairSection.addView(cancelPairButton);
         pairMessage = text(14);
@@ -257,8 +259,8 @@ public class MainActivity extends Activity {
             pairMessage.setText("That isn't a Tailscale address. It starts with 100.");
             return;
         }
+        if (!pairScreen.pairing()) return;
         pairMessage.setText("Pairing");
-        pairScreen.pairing();
         render();
         new Thread(() -> {
             String shown = "";
@@ -561,7 +563,8 @@ public class MainActivity extends Activity {
         boolean form = pairScreen.formShown(paired);
         pairSection.setVisibility(form ? View.VISIBLE : View.GONE);
         cancelPairButton.setVisibility(pairScreen.cancelShown(paired) ? View.VISIBLE : View.GONE);
-        cancelPairButton.setEnabled(pairScreen.cancelEnabled());
+        pairButton.setEnabled(pairScreen.idle());
+        cancelPairButton.setEnabled(pairScreen.idle());
         watchBack(pairScreen.cancelShown(paired));
         talkSection.setVisibility(paired && !form ? View.VISIBLE : View.GONE);
         pairedSection.setVisibility(paired && !form ? View.VISIBLE : View.GONE);
