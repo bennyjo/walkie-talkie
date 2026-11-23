@@ -8,7 +8,6 @@ import shutil
 import signal
 import socket
 import stat
-import struct
 import subprocess
 import sys
 import time
@@ -303,8 +302,6 @@ def _peer_pid(sock):
     try:
         if sys.platform == "darwin":
             return sock.getsockopt(0, LOCAL_PEERPID) or None
-        if hasattr(socket, "SO_PEERCRED"):
-            return struct.unpack("3i", sock.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))[0] or None
     except OSError:
         pass
     return None

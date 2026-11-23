@@ -166,6 +166,12 @@ class PhoneServer:
     def send_control(self, obj):
         self._write(control(obj))
 
+    def send_notice_tone(self, gen):
+        """Kept with the speech that follows it, so a resend plays the notice after its tone."""
+        data = control({"t": "notice", "gen": gen})
+        self.sent.append((self.seq + 1, gen, data))
+        self._write(data)
+
     def send_speech(self, gen, packet):
         self.seq += 1
         data = frame(SPEECH, SPEECH_HEADER.pack(self.seq, gen & 0xffff) + packet)

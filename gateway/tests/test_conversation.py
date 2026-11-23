@@ -94,6 +94,9 @@ class FakePhone:
     def send_control(self, message):
         self.controls.append(message)
 
+    def send_notice_tone(self, gen):
+        self.send_control({"t": "notice", "gen": gen})
+
     def send_speech(self, gen, packet):
         self.speech.append((gen, packet.decode()))
 

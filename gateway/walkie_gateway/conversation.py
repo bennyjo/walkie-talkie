@@ -1174,7 +1174,7 @@ class Conversation:
                     self.played_until = max(self.played_until, now)
                     if self.frames[0][0] is NOTICE_TONE:  # the phone plays it in line, just before the notice
                         self.frames.popleft()
-                        self.phone.send_control({"t": "notice", "gen": self.gen})
+                        self.phone.send_notice_tone(self.gen)
                         self.played_until += NOTICE_TONE_SECONDS
                         self.reply_heard = False
                         continue
