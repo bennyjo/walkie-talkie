@@ -298,15 +298,20 @@ public class MainActivity extends Activity {
     }
 
     private void closePair() {
+        hideKeyboard();
+        addressField.setText("");
+        codeField.setText("");
+        pairMessage.setText("");
+        render();
+    }
+
+    /** The pairing form's fields are the only text fields, so the keyboard goes when the form does. */
+    private void hideKeyboard() {
         View focused = getCurrentFocus();
         if (focused != null) {
             getSystemService(InputMethodManager.class).hideSoftInputFromWindow(focused.getWindowToken(), 0);
             focused.clearFocus();
         }
-        addressField.setText("");
-        codeField.setText("");
-        pairMessage.setText("");
-        render();
     }
 
     /** Back closes the pairing form when there is a pairing to return to. Registered only then, so Back is the system's otherwise. */
@@ -330,6 +335,7 @@ public class MainActivity extends Activity {
         stopService(new Intent(this, TalkService.class));
         stopBrowse();
         pairScreen.paired();
+        hideKeyboard();
         pairingOver = false;
         TalkService.status.pairingOver = false;
         picked = null;
