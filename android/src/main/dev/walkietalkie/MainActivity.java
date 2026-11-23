@@ -38,6 +38,7 @@ import java.io.IOException;
 import java.security.GeneralSecurityException;
 import java.security.Signature;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -597,8 +598,9 @@ public class MainActivity extends Activity {
         sessionsHint.setVisibility(View.GONE);
         String pickedId = picked == null ? null : picked.optString("id");
         picked = null;
-        for (JSONObject session : byLogin(list)) {
-            RadioButton option = sessionRow(session);
+        for (Map.Entry<RadioButton, JSONObject> row : byLogin(list).entrySet()) {
+            RadioButton option = row.getKey();
+            JSONObject session = row.getValue();
             if (session.optString("id").equals(pickedId)) {
                 option.setChecked(true);
                 picked = session; // its challenge may be new, so keep the row as the Mac last sent it
@@ -616,8 +618,9 @@ public class MainActivity extends Activity {
         }
         sessionsHint.setVisibility(list.length() > 1 ? View.VISIBLE : View.GONE);
         sessionsHint.setText("To switch, choose another session, or say switch session.");
-        for (JSONObject session : byLogin(list)) {
-            RadioButton option = sessionRow(session);
+        for (Map.Entry<RadioButton, JSONObject> row : byLogin(list).entrySet()) {
+            RadioButton option = row.getKey();
+            JSONObject session = row.getValue();
             if (session.optString("id").equals(checkedId)) option.setChecked(true);
             if (session.optString("id").equals(chosenId(TalkService.status))) {
                 picked = session; // so after Stop, Start is one tap away from the session you were on
@@ -626,11 +629,11 @@ public class MainActivity extends Activity {
     }
 
     /**
-     * The sessions grouped by login, each group under a heading that names its account, in a fixed order so
+     * A row for each session, grouped by login, each group under a heading that names its account, in a fixed order so
      * a group doesn't move when one of its sessions takes a prompt. Within a group, the Mac's order: the
      * latest prompt first. A login with no name comes last. With no named login at all, no headings.
      */
-    private List<JSONObject> byLogin(JSONArray list) {
+    private Map<RadioButton, JSONObject> byLogin(JSONArray list) {
         TreeMap<String, List<JSONObject>> groups = new TreeMap<>((a, b) ->
                 a.isEmpty() != b.isEmpty() ? (a.isEmpty() ? 1 : -1) : a.compareToIgnoreCase(b));
         for (int i = 0; i < list.length(); i++) {
@@ -638,10 +641,10 @@ public class MainActivity extends Activity {
             if (session != null) groups.computeIfAbsent(session.optString("login"), k -> new ArrayList<>()).add(session);
         }
         boolean headed = groups.size() > 1 || (groups.size() == 1 && !groups.firstKey().isEmpty());
-        List<JSONObject> rows = new ArrayList<>();
+        Map<RadioButton, JSONObject> rows = new LinkedHashMap<>();
         for (Map.Entry<String, List<JSONObject>> group : groups.entrySet()) {
             if (headed) sessionsGroup.addView(groupHeading(group.getKey()));
-            rows.addAll(group.getValue());
+            for (JSONObject session : group.getValue()) rows.put(sessionRow(session), session);
         }
         return rows;
     }
