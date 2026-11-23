@@ -137,7 +137,7 @@ A refused message gets the warning tone and "Didn't catch your voice. Say it aga
 
 ### Read your scores
 
-Each message logs one `speaker` line, with no words:
+Each message logs one `speaker` line, with no words, except "hang up" and what you say while paused:
 
 ```text
 speaker {"kind": "prompt", "score": 0.614, "seconds": 2.41, "threshold": 0.42, "outcome": "pass"}
