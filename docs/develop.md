@@ -40,12 +40,12 @@ The build needs no Gradle. It downloads a JDK and Android's build tools into `an
 | `gateway/walkie_gateway/conversation.py` | Routing, the tap, talking over a reply, pausing, the voice, spoken notices, relayed replies, the spoken yes, and when a call ends |
 | `gateway/walkie_gateway/turns.py` | Speech detection and end-of-speech detection |
 | `gateway/walkie_gateway/text.py` | What of a reply gets read aloud |
-| `gateway/walkie_gateway/speech.py` | Silero, Parakeet, Kokoro, and Opus |
+| `gateway/walkie_gateway/speech.py` | Silero, Parakeet, Kokoro, and Opus, and the pace from the talk file's front matter |
 | `gateway/walkie_gateway/security.py` | Bind rules, the token, pairing, the phone's signatures, and the seal on every frame |
 | `gateway/walkie_gateway/__main__.py` | The `serve`, `install`, and `revoke` commands |
 | `gateway/walkie_gateway/front_desk.py` | The front desk's launcher and settings |
 | `gateway/tools/fake_phone.py` | Stands in for the phone, for testing on the Mac |
-| `mod/walk-voice/hooks/register.js` | The mod, including which logins and folders may connect, and its check of the fingerprint |
+| `mod/walk-voice/hooks/register.js` | The mod, including which logins and folders may connect, its check of the fingerprint, and the voice rules, with the style part from the talk file |
 | `mod/walk-voice/hooks/p256.js` | The mod's check of a P-256 signature |
 | `mod/walk-voice/hooks/front-desk.js` | The mod's front-desk role and its rules for the model and the primary |
 | `android/src/main/` | The app. `TalkService` runs the conversation, `TalkGate` hears a voice over a reply, `Ducker` lowers other audio while a reply plays or you speak, and `PhoneKey` holds the hardware key |

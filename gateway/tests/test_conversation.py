@@ -29,7 +29,7 @@ from walkie_gateway.conversation import (
     Conversation,
 )
 from walkie_gateway.modlink import Session
-from walkie_gateway.speech import DEFAULT_VOICE, NOTICE_VOICE, VOICES
+from walkie_gateway.speech import DEFAULT_VOICE, NOTICE_VOICE, PACE, VOICES, read_pace
 from walkie_gateway.turns import SECONDS, WINDOW
 
 SPOKEN_SECONDS = 0.1
@@ -45,9 +45,11 @@ class FakeSpeech:
 
     def __init__(self):
         self.voices = []
+        self.paces = []  # (text, speed, gap)
 
-    def synthesize(self, text, voice):
+    def synthesize(self, text, voice, speed=1.0, gap=0.0):
         self.voices.append(voice)
+        self.paces.append((text, speed, gap))
         if text in self.unspeakable:
             raise RuntimeError("no voice for that")
         return text  # the fake encoder turns this into frames
@@ -1761,8 +1763,8 @@ class ConversationTest(unittest.IsolatedAsyncioTestCase):
         release = threading.Event()
         self.addCleanup(release.set)
         synthesize = self.conversation.speech.synthesize
-        self.conversation.speech.synthesize = lambda text, voice: (
-            release.wait(5) if text == "Second sentence." else None, synthesize(text, voice))[1]
+        self.conversation.speech.synthesize = lambda text, voice, **pace: (
+            release.wait(5) if text == "Second sentence." else None, synthesize(text, voice, **pace))[1]
         encode = self.conversation.encoder.encode
         self.conversation.encoder.encode = lambda text: (
             [b"%s:%d" % (text.encode(), i) for i in range(100)] if text == module.QUEUED else encode(text))
@@ -2066,6 +2068,68 @@ class ConversationTest(unittest.IsolatedAsyncioTestCase):
         self.event(kind="turn-end", turnId="t", reason="answer")
         await self.by_then(lambda: "Still here." in self.phone.said())
         self.assertEqual(self.phone.said(), ["Something on screen.", "Still here."])
+
+    # --- the pace ----------------------------------------------------------------
+
+    async def test_a_reply_pauses_longer_between_paragraphs_than_between_sentences(self):
+        self.choose()
+        self.event(kind="turn-start", turnId="t")
+        self.event(kind="text", turnId="t", text="Done. All three pass.\n\n- The first.\n- The second.\n")
+        self.event(kind="turn-end", turnId="t", reason="answer")
+        await self.by_then(lambda: len(self.conversation.speech.paces) == 4)
+        sentence, paragraph = PACE["sentence_pause"][0], PACE["paragraph_pause"][0]
+        self.assertEqual([gap for _, _, gap in self.conversation.speech.paces], [0.0, sentence, paragraph, paragraph])
+        self.assertEqual({speed for _, speed, _ in self.conversation.speech.paces}, {PACE["speed"][0]})
+        self.assertLess(PACE["speed"][0], 1.0)  # slower than the voice's own pace
+        self.assertGreater(paragraph, sentence)
+
+    async def test_a_notice_has_the_pace_but_no_pause_before_it(self):
+        self.conversation.say("It's in the queue.")
+        await self.by_then(lambda: self.conversation.speech.paces)
+        self.assertEqual(self.conversation.speech.paces, [("It's in the queue.", PACE["speed"][0], 0.0)])
+
+    async def test_the_talk_file_sets_the_pace_and_an_edit_holds_from_the_next_sentence(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = os.path.join(folder, "talk.md")
+            with open(path, "w") as f:
+                f.write("---\nspeed: 0.8\nsentence_pause: 1\n---\nTalk like a friend.\n")
+            self.conversation.pace.path = path
+            self.choose()
+            self.event(kind="turn-start", turnId="t")
+            self.event(kind="text", turnId="t", text="One. Two. And")
+            await self.by_then(lambda: len(self.conversation.speech.paces) == 2)
+            with open(path, "w") as f:
+                f.write("---\nspeed: 1.25\nsentence_pause: 0.6\n---\nTalk like a friend, and slowly.\n")
+            self.event(kind="text", turnId="t", text=" three.")
+            self.event(kind="turn-end", turnId="t", reason="answer")
+            await self.by_then(lambda: len(self.conversation.speech.paces) == 3)
+        self.assertEqual([(speed, gap) for _, speed, gap in self.conversation.speech.paces],
+                         [(0.8, 0.0), (0.8, 1.0), (1.25, 0.6)])
+
+    def test_the_talk_file_gives_only_the_pace_it_names_and_only_in_range(self):
+        defaults = {key: value[0] for key, value in PACE.items()}
+        self.assertEqual(read_pace(""), defaults)
+        self.assertEqual(read_pace("speed: 0.5\nNo front matter, so these are rules.\n"), defaults)
+        self.assertEqual(read_pace("---\nspeed: 0.5\nNever closed, so these are rules too.\n"), defaults)
+        with self.assertLogs("walkie.speech", "WARNING") as logs:
+            pace = read_pace("---\nspeed: 0.75\n\nparagraph_pause: 2\nsentence_pause: 9\n---\nsentence_pause: 0.1\n")
+        self.assertEqual(pace, dict(defaults, speed=0.75, paragraph_pause=2.0))
+        self.assertEqual(len(logs.output), 1)
+        for line in ("Speed: 0.75", "paragraph-pause: 2", "sentence pause: 1", "colour: blue",
+                     "paragraph_pause: 2s", "speed: 0.75  # slower"):
+            with self.assertLogs("walkie.speech", "WARNING"):
+                self.assertEqual(read_pace("---\n%s\n---\n" % line), defaults)
+        with self.assertLogs("walkie.speech", "WARNING"):
+            self.assertEqual(read_pace("---\nspeed: fast\n---\n"), defaults)
+
+    def test_the_documented_talk_file_has_the_default_pace(self):
+        root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..")
+        with open(os.path.join(root, "docs", "usage.md")) as f:
+            documented = f.read().split("## How it talks", 1)[1].split("```markdown\n", 1)[1].split("\n```", 1)[0]
+        defaults = {key: value[0] for key, value in PACE.items()}
+        self.assertEqual(read_pace(documented), defaults)
+        for key, value in defaults.items():
+            self.assertIn("%s: %s" % (key, value), documented)
 
     def mic(self, samples, seconds):
         for _ in range(int(seconds * 16000 / WINDOW)):
@@ -2388,7 +2452,7 @@ class ConversationTest(unittest.IsolatedAsyncioTestCase):
         release = threading.Event()
         self.addCleanup(release.set)
         synthesize = self.conversation.speech.synthesize
-        self.conversation.speech.synthesize = lambda text, voice: (release.wait(), synthesize(text, voice))[1]
+        self.conversation.speech.synthesize = lambda text, voice, **pace: (release.wait(), synthesize(text, voice, **pace))[1]
         self.choose()
         self.finish_turn("Pause.")
         await self.settle(0.05)

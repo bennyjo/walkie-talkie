@@ -45,17 +45,27 @@ const ENDED = 'Walkie-talkie ended.'
 // Turns the session starts by itself: a background task's notice, or an orchestrator's doorbell.
 const MACHINE_PROMPT = /^\s*(<task-notification>|: Firstmate operational input waiting:)/
 
-const VOICE_RULES = `Apply these rules to your reply to the prompt next to this note, and to no later reply. The person is out walking with earbuds and talks to you through a voice app. They can't see the screen. Your text is read aloud to them as you write it.
+// The owner's talk file. Its text, after any front matter, replaces STYLE_RULES. The gateway reads the
+// front matter, which sets the voice's speed and pauses.
+const TALK_FILE = '~/.config/walkie-talkie/talk.md'
 
-Write for the ear:
+// These hold whatever the talk file says: the rules last for one reply, and nothing private is read out.
+const VOICE_INTRO = `Apply these rules to your reply to the prompt next to this note, and to no later reply. The person is out walking with earbuds and talks to you through a voice app. They can't see the screen. Your text is read aloud to them as you write it.`
+
+const STYLE_RULES = `Write for the ear:
 
 - Start with the verdict or answer in one sentence: done, not done, blocked, or the answer itself.
+- When they tell you to do something, don't repeat their request back to them. They know what they asked. Acknowledge it in a few words at most, and say only what they don't know yet.
 - Then give at most three short points: what changed, whether you verified it, and what needs their decision.
 - Keep the whole reply under about 100 words, in plain conversational sentences.
-- No code, commands, file paths, URLs, diffs, logs, tables, credentials, hashes, or version strings. They're dropped, so describe them in words instead.
 - Their prompts are recognised speech, so read past misheard words, and ask when the meaning is unclear.
-- If you're blocked, say so and ask the one question that unblocks you.
-- Before anything destructive, say in one sentence what you need confirmed, naming it in words, and ask them to say one specific word back. Don't ask for a bare yes.`
+- If you're blocked, say so and ask the one question that unblocks you.`
+
+const FIXED_RULES = `These always apply:
+
+- No code, commands, file paths, URLs, diffs, logs, tables, credentials, hashes, or version strings. They're dropped, so describe them in words instead.
+- Before anything destructive, say in one sentence what you need confirmed, naming it in words, and ask them to say one specific word back. Don't ask for a bare yes.
+- How you sound is set in ${TALK_FILE}. Its text, after the front matter, replaces the style rules above, but never these. The front matter sets the voice: speed, where 1 is the voice's natural speed, and sentence_pause and paragraph_pause in seconds. Write each as its exact name, a colon, and a plain number, such as speed: 0.8, with no unit or comment. Without them, speed is 0.9, sentence_pause 0.4, and paragraph_pause 0.9. When they ask you to talk differently from now on, such as slower, with longer pauses, or with shorter replies, change that file, creating it if it's missing, so the change holds for every later reply. When you create or edit its text, start from the style rules you were given above and change only what they asked, so the rest stay. Then say in a few words that you did.`
 
 export const SPOKEN_EARLY = `This message was spoken before your last reply finished, so they hadn't heard that reply. It can't confirm anything in that reply.`
 
@@ -249,8 +259,21 @@ function promptRefused() {
 // in before the prompt: a turn builds its first request before turn.start, so a row added there
 // would miss that request.
 async function addVoiceRules($, early = false) {
-  const text = early ? `${VOICE_RULES}\n\n${SPOKEN_EARLY}` : VOICE_RULES
+  const rules = [VOICE_INTRO, await styleRules($), FIXED_RULES]
+  if (early) rules.push(SPOKEN_EARLY)
+  const text = rules.join('\n\n')
   await $.session.append({ message: { type: 'user', content: [{ type: 'text', text }] } }).catch(() => {})
+}
+
+// Read for each prompt, so an edit holds from the next reply on. A missing file, one with only front
+// matter, or one that can't be read keeps the shipped rules.
+async function styleRules($) {
+  const file = await $.fs.read(`${await $.env.get('HOME')}/.config/walkie-talkie/talk.md`).catch(() => null)
+  if (typeof file !== 'string') return STYLE_RULES
+  const lines = file.replace(/^\uFEFF/, '').split(/\r?\n/)
+  const end = lines[0].trim() === '---' ? lines.findIndex((line, i) => i > 0 && line.trim() === '---') : -1
+  const body = (end > 0 ? lines.slice(end + 1) : lines).join('\n').trim()
+  return body || STYLE_RULES
 }
 
 function dropWaiting($) {

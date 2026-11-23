@@ -79,7 +79,7 @@ import time
 import numpy as np
 
 from . import security
-from .speech import DEFAULT_VOICE, NOTICE_VOICE, VOICES
+from .speech import DEFAULT_VOICE, NOTICE_VOICE, VOICES, Pace
 from .text import LEFT_OUT, SpeechFilter, compact, kind, sanitize_prompt, spoken_words, switch_target, words_of
 from .turns import SECONDS, TurnDetector, speaking_level
 
@@ -231,7 +231,7 @@ def is_state_notice(unit):
 
 class Conversation:
     def __init__(self, speech, is_speech, new_decoder, encoder, clock=time.monotonic, voice_file=None, pause_file=None,
-                 heard=True):
+                 heard=True, talk_file=None):
         self.speech = speech
         self.new_decoder = new_decoder
         self.encoder = encoder
@@ -264,6 +264,7 @@ class Conversation:
         self.voice_file = voice_file
         self.voice = self._load_voice()
         self.reply_voice = self.voice  # a choice takes effect from the next reply
+        self.pace = Pace(talk_file)  # the speed and pauses, which an edit to the talk file changes from the next sentence
         self.pause_file = pause_file
         self.heard = heard          # say when a prompt has reached the session, and warn when it can't
         self.paused = bool(pause_file) and os.path.exists(pause_file)  # a restart mustn't start listening to a stranger
@@ -1110,7 +1111,11 @@ class Conversation:
             self.frames_ready.set()
 
     def _synthesize(self, text, voice):
-        return self.encoder.encode(self.speech.synthesize(text, voice))
+        """A notice has no break before it. A reply's unit has the pause its break calls for."""
+        pace = self.pace.current()
+        before = getattr(text, "before", None)
+        gap = pace[before + "_pause"] if before in ("sentence", "paragraph") else 0.0
+        return self.encoder.encode(self.speech.synthesize(text, voice, speed=pace["speed"], gap=gap))
 
     # --- the voice ---------------------------------------------------------------
 

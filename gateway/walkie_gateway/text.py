@@ -287,6 +287,18 @@ def first_clause(s):
     return [s[:head], s[head + 1:]] if head > 0 else [s]
 
 
+class Unit(str):
+    """A unit of a reply, and the break before it: "clause" inside a sentence, "sentence", "paragraph", or None first.
+
+    The break is where a paragraph, list item, or line ended, even if what lay between wasn't read out.
+    """
+
+    def __new__(cls, text, before):
+        unit = super().__new__(cls, text)
+        unit.before = before
+        return unit
+
+
 class SpeechFilter:
     """One reply's text pieces in, speakable units out, in order, as sentences complete."""
 
@@ -302,6 +314,7 @@ class SpeechFilter:
         self.truncated = False
         self.spoke = False
         self.hidden = False     # something was left out since the last words read aloud
+        self.ended = None       # the break since the last unit: "sentence", or "paragraph" once its line ended
 
     def feed(self, text):
         if self.seen >= MAX_INPUT:
@@ -343,6 +356,12 @@ class SpeechFilter:
         return out
 
     def _complete(self, line):
+        out = self._line(line)
+        if self.spoke:
+            self.ended = "paragraph"
+        return out
+
+    def _line(self, line):
         if self.midline:
             self.midline = False
             return self._units(line)
@@ -464,7 +483,10 @@ class SpeechFilter:
                     break
                 self.spoke = True
                 self.total += len(unit) + 1
-                out.append(unit)
+                out.append(Unit(unit, self.ended))
+                self.ended = "clause"
+        if out and self.ended == "clause":
+            self.ended = "sentence"
         return out
 
 

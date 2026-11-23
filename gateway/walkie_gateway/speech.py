@@ -2,6 +2,7 @@
 
 Every model runs on this Mac. Nothing here opens a network connection.
 """
+import logging
 import os
 
 import av
@@ -18,7 +19,14 @@ OPUS_FRAME = 480        # 20 ms at the voice's rate
 OPUS_BITRATE = 24000
 RESET_AFTER_WINDOWS = 16  # about half a second with no voice: Silero starts afresh
 SILENT = 0.01           # samples quieter than this at either end of a sentence are trimmed
-TAIL_SECONDS = 0.12     # the pause kept after a sentence
+TAIL_SECONDS = 0.12     # the pause kept after every unit, which is all a sentence cut at a clause gets
+# How fast the voice talks, and the silence between a reply's sentences and between its paragraphs, list
+# items, and lines, in seconds. The owner sets them in the talk file's front matter: (default, lowest, highest).
+PACE = {
+    "speed": (0.9, 0.5, 2.0),
+    "sentence_pause": (0.4, 0.0, 3.0),
+    "paragraph_pause": (0.9, 0.0, 5.0),
+}
 # The pinned Kokoro model's speakers. A voice's place here is its speaker ID in that model.
 SPEAKERS = (
     ("af", "Bella and Sarah, American"),
@@ -40,6 +48,9 @@ VOICES = tuple(speaker for speaker in SPEAKERS if speaker[0] != NOTICE_VOICE)  #
 DEFAULT_VOICE = VOICES[0][0]
 
 
+log = logging.getLogger("walkie.speech")
+
+
 def default_models_dir():
     return os.environ.get("WALKIE_TALKIE_MODELS") or os.path.expanduser(
         "~/.local/share/walkie-talkie/models")
@@ -51,6 +62,64 @@ def trim_silence(samples):
     if not len(sounding):
         return samples[:0]
     return samples[sounding[0]:sounding[-1] + int(TAIL_SECONDS * VOICE_RATE)]
+
+
+def talk_file():
+    """The owner's talk file. The mod reads its text as the spoken-style rules, and the gateway its front matter."""
+    return os.path.expanduser("~/.config/walkie-talkie/talk.md")
+
+
+def read_pace(text):
+    """The pace from a talk file's front matter: each setting it doesn't give, or gives wrong, keeps its default."""
+    pace = {key: default for key, (default, _, _) in PACE.items()}
+    lines = text.lstrip("\ufeff").splitlines()
+    end = next((i for i, line in enumerate(lines) if i and line.strip() == "---"), None)
+    if not lines or lines[0].strip() != "---" or end is None:
+        return pace  # no front matter, as the mod reads it too
+    for line in lines[1:end]:
+        if not line.strip():
+            continue
+        key, _, value = line.partition(":")
+        key = key.strip()
+        if key not in PACE:
+            log.warning("the talk file sets %s, which isn't one of %s, so it's ignored", key, ", ".join(PACE))
+            continue
+        _, low, high = PACE[key]
+        try:
+            number = float(value)
+        except ValueError:
+            number = None
+        if number is not None and low <= number <= high:
+            pace[key] = number
+        else:
+            log.warning("the talk file's %s must be a number from %s to %s, so it stays at %s",
+                        key, low, high, pace[key])
+    return pace
+
+
+class Pace:
+    """The talk file's pace, read again whenever the file changes, so an edit holds from the next sentence on."""
+
+    def __init__(self, path):
+        self.path = path
+        self.seen = None
+        self.pace = read_pace("")
+
+    def current(self):
+        try:
+            info = os.stat(self.path) if self.path else None
+        except OSError:
+            info = None
+        seen = info and (info.st_mtime_ns, info.st_size, info.st_ino)
+        if seen != self.seen:
+            self.seen = seen
+            try:
+                with open(self.path, encoding="utf-8", errors="replace") as f:
+                    text = f.read(65536)
+            except (OSError, TypeError):
+                text = ""
+            self.pace = read_pace(text)
+        return self.pace
 
 
 class Speech:
@@ -94,11 +163,16 @@ class Speech:
         self.recognizer.decode_stream(stream)
         return stream.result.text.strip()
 
-    def synthesize(self, text, voice=DEFAULT_VOICE):
-        """int16 samples at VOICE_RATE."""
+    def synthesize(self, text, voice=DEFAULT_VOICE, speed=1.0, gap=0.0):
+        """int16 samples at VOICE_RATE. gap is the silence wanted since the unit before, whose tail holds some of it.
+
+        The silence goes before the words, not after them, so a reply's last sentence ends as soon as it's said.
+        """
         sid = next(i for i, (name, _) in enumerate(SPEAKERS) if name == voice)
-        audio = self.tts.generate(text, sid=sid, speed=1.0)
+        audio = self.tts.generate(text, sid=sid, speed=speed)
         samples = trim_silence(np.asarray(audio.samples, dtype=np.float32))
+        lead = np.zeros(int(max(0.0, gap - TAIL_SECONDS) * VOICE_RATE), dtype=np.float32)
+        samples = np.concatenate((lead, samples)) if len(samples) else samples
         return (np.clip(samples, -1.0, 1.0) * 32767).astype(np.int16)
 
 

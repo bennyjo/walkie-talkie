@@ -29,6 +29,19 @@ def spoken(text, piece=7):
 
 
 class SpeechFilterTest(unittest.TestCase):
+    def test_each_unit_knows_the_break_before_it(self):
+        units = spoken("Every test passed on the phone today, and on the Mac as well, twice over. They ran twice.\n\n"
+                       "- The first.\n- The second.\n```\ncode\n```\nLast words. ")
+        self.assertEqual([(unit, unit.before) for unit in units], [
+            ("Every test passed on the phone today,", None),
+            ("and on the Mac as well, twice over.", "clause"),
+            ("They ran twice.", "sentence"),
+            ("The first.", "paragraph"),
+            ("The second.", "paragraph"),
+            (ON_SCREEN, "paragraph"),
+            ("Last words.", "sentence"),
+        ])
+
     def test_sentences_come_out_before_the_line_ends(self):
         speech = SpeechFilter()
         self.assertEqual(speech.feed("Done. The tests"), ["Done."])

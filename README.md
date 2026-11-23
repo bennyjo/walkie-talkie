@@ -93,6 +93,10 @@ cd walkie-talkie
 
 To keep some folders off the phone, to set up a front desk, or for everything else, see [Documentation](#documentation).
 
+## Change how it talks
+
+To change how fast the voice talks, how long it pauses between sentences and sections, or how the session words its replies, write `~/.config/walkie-talkie/talk.md` on the Mac. Its front matter sets the speed and pauses, and its text is the session's style rules, like an `AGENTS.md` for talking. You can also ask the session by voice, for example "talk slower from now on", and it updates the file for you. The setting holds for every reply, in every session. For the settings and the default rules, see [How it talks](docs/usage.md#how-it-talks).
+
 ## Security
 
 A live session can do anything you can do at its keyboard, so getting into one should be as hard as getting into your bank account. When in doubt, Walkie Talkie does what a banking app does.
@@ -140,7 +144,7 @@ Early: version 0.1.0.
 | Page | What's in it |
 | --- | --- |
 | [Set up](docs/setup.md) | Every setup step, updating the mod, and keeping folders off the phone |
-| [Use it](docs/usage.md) | What happens when you talk, pause, tap, or go quiet, switching sessions, how a message ends, timings, and troubleshooting |
+| [Use it](docs/usage.md) | What happens when you talk, pause, tap, or go quiet, switching sessions, how a message ends, timings, how it talks, and troubleshooting |
 | [Front desk](docs/front-desk.md) | A small session that answers while your main session is busy, and the fingerprint confirmation for irreversible actions |
 | [Security](docs/security.md) | The full security model and its limits |
 | [Develop](docs/develop.md) | Tests, builds, the code map, and testing without a phone |
