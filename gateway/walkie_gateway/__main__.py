@@ -83,7 +83,7 @@ def install(logins, deny, deny_on, remove_logins=(), allow=(), allow_on=(), name
     A copy, not a link: an edit or a branch switch in this checkout must not change what
     every session runs. Read-only, so a stray save doesn't either. The logins and deny lists
     stay in the owner's own file, never in this repository. An install only adds to them:
-    --remove-login takes a login away but keeps its deny list for when it comes back, and
+    --remove-login takes a login away but keeps its deny list and name for when it comes back, and
     only --allow and --allow-on take a denied name away. A login's name, which heads its sessions in
     the phone's list, stays until --name-login gives it another.
     """
@@ -109,14 +109,16 @@ def install(logins, deny, deny_on, remove_logins=(), allow=(), allow_on=(), name
         if login not in named:
             _login_dir(login, "Name it with --remove-login to stop installing into it.")
     added, taken = _per_login(deny_on, lists, "--deny-on"), _per_login(allow_on, lists, "--allow-on")
-    titles = _login_names(old.get("logins"), _per_login(name_login, lists, "--name-login"))
+    titles = _login_names({**(old.get("removed") or {}), **(old.get("logins") or {})},
+                          _per_login(name_login, lists, "--name-login"))
     config = {
         "logins": {login: {"deny": _without(_names(names, added[login]), taken[login], "--allow-on"),
                            **({"name": titles[login]} if titles.get(login) else {})}
                    for login, names in lists.items()},
         "deny": _without(_names(old.get("deny", []), deny), allow, "--allow"),
     }
-    kept = {login: {"deny": names} for login, names in kept.items() if names}
+    kept = {login: {"deny": names, **({"name": titles[login]} if titles.get(login) else {})}
+            for login, names in kept.items() if names or titles.get(login)}
     if kept:
         config["removed"] = kept
     for login in removed:

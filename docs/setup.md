@@ -46,7 +46,7 @@ An install only adds. Logins and deny lists from earlier installs stay, and ever
 uv run --project gateway walkie-gateway install --remove-login ~/.claude
 ```
 
-The removed login's own deny list stays in `connect.json`. If you name that login again, the install restores the list and says how many names it restored.
+The removed login's own deny list and name stay in `connect.json`. If you name that login again, the install restores both and says how many deny-list names it restored.
 
 ### Name each account
 

@@ -142,6 +142,14 @@ class InstallTest(unittest.TestCase):
         self.assertNotIn("removed", self.config())
         self.assertIn("The login at %s gets back its own deny list, kept from when it was removed: 1 name." % self.personal, out)
 
+    def test_a_removed_login_keeps_its_name_for_when_it_comes_back(self):
+        run("install", "--login", self.work, "--login", self.personal, "--name-login", self.personal, "personal")
+        run("install", "--remove-login", self.personal)
+        self.assertEqual(self.config()["removed"], {self.personal: {"deny": [], "name": "personal"}})
+        run("install", "--login", self.personal)
+        self.assertEqual(self.config()["logins"][self.personal], {"deny": [], "name": "personal"})
+        self.assertNotIn("removed", self.config())
+
     def test_removing_a_login_that_was_never_installed_is_refused(self):
         run("install", "--login", self.personal)
         with self.assertRaises(SystemExit):
