@@ -16,11 +16,14 @@ import android.os.CancellationSignal;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
+import android.security.keystore.KeyExpiredException;
+import android.security.keystore.KeyPermanentlyInvalidatedException;
 import android.text.InputType;
 import android.text.SpannableStringBuilder;
 import android.text.Spanned;
 import android.text.style.ForegroundColorSpan;
 import android.text.style.RelativeSizeSpan;
+import android.util.Log;
 import android.util.TypedValue;
 import android.view.View;
 import android.view.WindowManager;
@@ -47,6 +50,7 @@ import org.json.JSONObject;
  * confirmed here with a fingerprint as well. Like a banking app, the screen can't be captured.
  */
 public class MainActivity extends Activity {
+    private static final String TAG = "walkie";
     private static final long REFRESH_MS = 500;
     private static final int BRAND_GREEN = 0xFF1F6F5C; // white text stays readable on it, day and night
     private static final int WARN_DAYS = 3;
@@ -428,7 +432,11 @@ public class MainActivity extends Activity {
         try {
             signer = PhoneKey.signer();
         } catch (GeneralSecurityException | IOException e) {
-            message = "This phone's key has gone, because a fingerprint changed or the pairing ran out. Tap Pair again.";
+            Log.e(TAG, "the key won't sign", e);
+            message = e instanceof KeyPermanentlyInvalidatedException || e instanceof KeyExpiredException
+                    ? "This phone's key has gone, because a fingerprint changed or the pairing ran out. Tap Pair again. "
+                            + describe(e)
+                    : "The key won't sign: " + describe(e);
             if (cancelled != null) cancelled.run();
             render();
             return;
@@ -461,7 +469,8 @@ public class MainActivity extends Activity {
                         try {
                             then.with(PhoneKey.sign(result.getCryptoObject().getSignature(), words));
                         } catch (GeneralSecurityException e) {
-                            message = "The fingerprint didn't unlock the key. Try again.";
+                            Log.e(TAG, "the fingerprint didn't unlock the key", e);
+                            message = "The fingerprint didn't unlock the key. Try again. " + describe(e);
                         }
                         render();
                     }
@@ -475,6 +484,17 @@ public class MainActivity extends Activity {
                         render();
                     }
                 });
+    }
+
+    /** The exception's class and message, then each cause's, so the real error can be read on the phone. */
+    private static String describe(Throwable e) {
+        StringBuilder text = new StringBuilder();
+        for (int depth = 0; e != null && depth < 4; depth++, e = e.getCause()) {
+            if (depth > 0) text.append(", caused by ");
+            text.append(e.getClass().getSimpleName());
+            if (e.getMessage() != null) text.append(": ").append(e.getMessage());
+        }
+        return text.toString();
     }
 
     private void chooseVoice(String voice) {
