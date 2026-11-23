@@ -5,6 +5,8 @@
        doesn't say whether Tailscale's addresses count. -->
   <uses-sdk android:minSdkVersion="33" android:targetSdkVersion="36"/>
   <uses-permission android:name="android.permission.INTERNET"/>
+  <!-- To find the VPN network: the app dials the Mac only through it. -->
+  <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
   <uses-permission android:name="android.permission.RECORD_AUDIO"/>
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE"/>

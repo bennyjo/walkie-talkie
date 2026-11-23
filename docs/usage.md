@@ -143,6 +143,8 @@ Pick a voice under **Voice** in the app, once you've tapped **Start**. All 11 co
 | `Missing ... Run gateway/fetch-models.sh` | The speech models aren't downloaded yet |
 | The app says "Connecting to the Mac" | Check Tailscale on both ends, and that the gateway is running |
 | The app says "Can't reach your Mac" | Turn off any VPN that blocks Tailscale, check Tailscale on both ends, and check the Mac is awake |
+| The app says "Tailscale isn't connected on this phone" | The phone has no VPN network, so the app sends nothing. Connect Tailscale on the phone |
+| The app says "Your Mac's answer didn't prove it's your Mac" | The gateway answered with another token, or the app and the gateway are from different versions. Update both, then tap **Pair again** if it goes on |
 | The app says "the gateway isn't running" | Start it on the Mac |
 | The app says "Your Mac refused this phone" | The pairing was revoked, or the phone's address changed. Wait a minute, then tap **Pair again** if it still fails |
 | No sessions in the app | No session has the mod running. Type `/reload-plugins` in a session that started before the install. If it says `0 plugins`, run the install for that session's login. A session in a denied folder, on a login the install didn't name, or in an orchestrated worker never shows. `0 hooks` in that line is normal |

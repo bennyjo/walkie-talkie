@@ -8,7 +8,7 @@ Mic transmitter --radio--> USB receiver --> AudioRecord (VOICE_RECOGNITION, pref
 Earbuds <--A2DP-- AudioTrack (USAGE_MEDIA, preferred Bluetooth output)
                                                |
                   android/: foreground service, talk-over gate, earbud tap
-                                               |  Opus over TCP, inside the tailnet
+                                               |  Opus over TCP, each frame encrypted, inside the tailnet
                                                v
                   gateway/: turn detection, Parakeet, Kokoro, session router
                                                |  Unix socket: long poll and POST
@@ -41,7 +41,7 @@ The build needs no Gradle. It downloads a JDK and Android's build tools into `an
 | `gateway/walkie_gateway/turns.py` | Speech detection and end-of-speech detection |
 | `gateway/walkie_gateway/text.py` | What of a reply gets read aloud |
 | `gateway/walkie_gateway/speech.py` | Silero, Parakeet, Kokoro, and Opus |
-| `gateway/walkie_gateway/security.py` | Bind rules, the token, pairing, and the phone's signatures |
+| `gateway/walkie_gateway/security.py` | Bind rules, the token, pairing, the phone's signatures, and the seal on every frame |
 | `gateway/walkie_gateway/__main__.py` | The `serve`, `install`, and `revoke` commands |
 | `gateway/walkie_gateway/front_desk.py` | The front desk's launcher and settings |
 | `gateway/tools/fake_phone.py` | Stands in for the phone, for testing on the Mac |
