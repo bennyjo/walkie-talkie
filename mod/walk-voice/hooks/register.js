@@ -520,14 +520,14 @@ async function allowedHere($) {
 }
 
 // The name the install gave the login, such as "work", or else its folder's, short: "default" for
-// ~/.claude, and "personal" for ~/.claude-personal. Like a folder, a login whose path, or any word of
-// its name, is a denied name goes unnamed.
+// ~/.claude, and "personal" for ~/.claude-personal. Like a folder, a login whose path holds a denied
+// name, or whose name contains one anywhere, goes unnamed.
 async function nameOfLogin($, home, login, given) {
   if (login.toLowerCase().split('/').some((part) => deny.includes(part))) return ''
   const name = typeof given === 'string' && given.trim() ? given.trim()
     : login === (await realPath($, `${home}/.claude`)) ? 'default'
     : login.split('/').pop().replace(/^\./, '').replace(/^claude-/, '')
-  return name.toLowerCase().split(/[\s._-]+/).some((word) => deny.includes(word)) ? '' : name
+  return deny.some((denied) => name.toLowerCase().includes(denied)) ? '' : name
 }
 
 export function register(on) {
