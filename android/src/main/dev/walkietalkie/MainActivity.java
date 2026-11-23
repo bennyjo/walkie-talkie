@@ -258,6 +258,8 @@ public class MainActivity extends Activity {
             return;
         }
         pairMessage.setText("Pairing");
+        pairScreen.pairing();
+        render();
         new Thread(() -> {
             String shown = "";
             boolean paired = false;
@@ -275,6 +277,7 @@ public class MainActivity extends Activity {
                 pairMessage.setText(result);
                 codeField.setText("");
                 if (replaced) newPairing();
+                else pairScreen.failed();
                 render();
             });
         }, "walkie-pair").start();
@@ -288,7 +291,10 @@ public class MainActivity extends Activity {
     }
 
     private void cancelPair() {
-        pairScreen.cancel();
+        if (pairScreen.cancel()) closePair();
+    }
+
+    private void closePair() {
         addressField.setText("");
         codeField.setText("");
         pairMessage.setText("");
@@ -297,7 +303,7 @@ public class MainActivity extends Activity {
 
     /** Back closes the pairing form when there is a pairing to return to. Registered only then, so Back is the system's otherwise. */
     private final OnBackInvokedCallback closeForm = () -> {
-        if (pairScreen.back(Pairing.host(this) != null)) cancelPair();
+        if (pairScreen.back(Pairing.host(this) != null)) closePair();
     };
     private boolean closeFormRegistered;
 
@@ -317,6 +323,7 @@ public class MainActivity extends Activity {
         stopBrowse();
         pairScreen.paired();
         pairingOver = false;
+        TalkService.status.pairingOver = false;
         picked = null;
         message = null;
     }
@@ -554,6 +561,7 @@ public class MainActivity extends Activity {
         boolean form = pairScreen.formShown(paired);
         pairSection.setVisibility(form ? View.VISIBLE : View.GONE);
         cancelPairButton.setVisibility(pairScreen.cancelShown(paired) ? View.VISIBLE : View.GONE);
+        cancelPairButton.setEnabled(pairScreen.cancelEnabled());
         watchBack(pairScreen.cancelShown(paired));
         talkSection.setVisibility(paired && !form ? View.VISIBLE : View.GONE);
         pairedSection.setVisibility(paired && !form ? View.VISIBLE : View.GONE);
