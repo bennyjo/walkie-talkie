@@ -13,7 +13,6 @@ import hashlib
 import json
 import os
 import threading
-import time
 
 import av
 import av.logging
@@ -176,8 +175,7 @@ def record_until(device, stop, started):
         while not stop.is_set():
             try:
                 packet = next(container.demux(stream))
-            except BlockingIOError:  # nothing captured yet
-                time.sleep(0.01)
+            except BlockingIOError:  # nothing new yet; don't pause, the input holds only its latest buffer
                 continue
             for frame in packet.decode():
                 pieces += [out.to_ndarray().reshape(-1) for out in resampler.resample(frame)]

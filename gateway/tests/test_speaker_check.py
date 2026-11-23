@@ -3,6 +3,8 @@ import asyncio
 import json
 import os
 import tempfile
+import threading
+import time
 import unittest
 from unittest import mock
 
@@ -287,6 +289,42 @@ class VoiceprintTest(unittest.TestCase):
         with mock.patch("builtins.print"):
             self.assertEqual(cli.main(["enroll", "--remove", "--state", self.state, "--models", self.models]), 0)
         self.assertFalse(os.path.exists(voiceprint.path(self.state)))
+
+    def test_the_recorder_keeps_all_it_hears_from_an_input_that_holds_one_buffer(self):
+        """AVFoundation keeps only the latest buffer, so the recorder must read without pausing."""
+        period, size = 0.002, 32  # a 2 ms buffer of 16 kHz samples, as a Mac input hands them out
+
+        class Frame:
+            def to_ndarray(self):
+                return np.full((1, size), 1000, dtype=np.int16)
+
+        class Input:
+            streams = mock.Mock(audio=[object()])
+
+            def __init__(self):
+                self.opened, self.delivered = time.monotonic(), 0
+
+            def demux(self, stream):
+                latest = int((time.monotonic() - self.opened) / period)
+                if latest <= self.delivered:
+                    raise BlockingIOError
+                self.delivered = latest  # any buffer before the latest was overwritten
+                return iter([mock.Mock(decode=lambda: [Frame()])])
+
+            def close(self):
+                pass
+
+        resampler = mock.Mock(resample=lambda frame: [frame])
+        stop, started, kept = threading.Event(), threading.Event(), {}
+        with mock.patch.object(voiceprint.av, "open", lambda *a, **k: Input()), \
+                mock.patch.object(voiceprint.av, "AudioResampler", lambda **k: resampler):
+            worker = threading.Thread(target=lambda: kept.update(samples=voiceprint.record_until("0", stop, started)))
+            worker.start()
+            started.wait()
+            time.sleep(1.0)
+            stop.set()
+            worker.join()
+        self.assertGreater(len(kept["samples"]) / RATE, 0.8)
 
     def test_thresholds_from_the_command_line(self):
         self.assertEqual(cli._thresholds("0.3,0.4,0.5"), (0.3, 0.4, 0.5))
