@@ -1024,6 +1024,35 @@ class ConversationTest(unittest.IsolatedAsyncioTestCase):
         await self.settle()
         self.assertIn(module.IDLE_ENDED, self.phone.said())
 
+    async def test_hang_up_ends_the_run_and_never_reaches_the_session(self):
+        self.choose()
+        self.finish_turn("Hang up.")
+        self.assertFalse(self.phone.approved)
+        self.assertIsNone(self.conversation.chosen)
+        self.assertEqual(len(self.session.orders), 0)
+        await self.settle()
+        self.assertIn(module.HUNG_UP, self.phone.said())
+
+    async def test_hang_up_tells_the_phone_after_the_notice_has_played(self):
+        with mock.patch.object(module, "ENDED_AFTER_SECONDS", 0.05):
+            self.choose()
+            self.finish_turn("Hang up")
+            await self.settle()
+        self.assertEqual(await self.ended(), ["hangup"])
+
+    async def test_hang_up_works_while_paused_and_without_a_session(self):
+        self.choose()
+        self.finish_turn("Pause it.")
+        self.assertTrue(self.conversation.paused)
+        self.finish_turn("Hang up.")
+        self.assertFalse(self.phone.approved)
+
+    async def test_a_prompt_with_hang_up_in_it_goes_to_the_session(self):
+        self.choose()
+        self.finish_turn("Hang up the picture in the README.")
+        self.assertTrue(self.phone.approved)
+        self.assertEqual(self.order()["submit"], "Hang up the picture in the README.")
+
     async def test_a_reply_still_coming_keeps_the_run(self):
         self.choose()
         self.event(kind="turn-start", turnId="long")

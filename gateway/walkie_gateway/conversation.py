@@ -115,6 +115,7 @@ SESSION_GONE = "That session has gone. Choose another in the app, and tap Start.
 CONNECTED = "Connected to %s."  # never logged: it holds a folder's name
 SESSION_CLOSED = "That session ended the call. Tap Start in the app to connect again."
 IDLE_ENDED = "Nothing was said for 30 minutes, so I ended the call."
+HUNG_UP = "Hanging up."
 CANCELLED = "Cancelled."
 DESK_CANCELLED = "Stopped what was waiting. Anything already filed still stands."
 NOT_SENT = "I couldn't send that to the session."
@@ -160,7 +161,7 @@ LISTENING = "Listening."
 STILL_PAUSED = "Still paused. Say go to start listening."
 # These go ahead of a reply, because a whole reply can be waiting, and the owner is waiting to know.
 # Only the latest is true, so it replaces any that hasn't gone out, and the last one heard is the current state.
-STATE_NOTICES = {PAUSED, LISTENING, STILL_PAUSED}
+STATE_NOTICES = {PAUSED, LISTENING, STILL_PAUSED, HUNG_UP}
 
 
 class Relayed:
@@ -178,7 +179,7 @@ NOTICE_NAMES = {
     LOST_PART: "lost-part", STOPPED_AT_KEYBOARD: "stopped-at-keyboard", LATER_DROPPED: "later-dropped", NOTHING_TO_TYPE: "nothing-to-type", DIALOG_OPEN: "dialog-open",
     DRAFT_OPEN: "draft-open", NO_PANE: "no-pane", PERMISSION: "permission", TURN_FAILED: "turn-failed",
     NOTHING_TO_CONFIRM: "nothing-to-confirm", CONFIRM_IN_APP: "confirm-in-app", NOT_CONFIRMED: "not-confirmed",
-    YES_SENT: "yes-sent", YES_NOT_SENT: "yes-not-sent", SESSION_CLOSED: "session-closed", IDLE_ENDED: "idle-ended",
+    YES_SENT: "yes-sent", YES_NOT_SENT: "yes-not-sent", SESSION_CLOSED: "session-closed", IDLE_ENDED: "idle-ended", HUNG_UP: "hung-up",
     REPLY_NOT_SPOKEN: "reply-not-spoken", NOT_FILED: "not-filed", NO_OTHER_SESSION: "no-other-session",
     PAUSED: "paused", LISTENING: "listening", STILL_PAUSED: "still-paused",
 }
@@ -622,6 +623,10 @@ class Conversation:
         what = kind(text)
         if self.hold:  # it ended without ever counting as the owner
             self._release_hold()
+            return
+        if what == "hang-up":  # paused or not, and with or without a session: the call ends, and a new one needs the fingerprint
+            log.info("hang up, so the run ended")
+            self._end_run("hangup", HUNG_UP)
             return
         if self.paused:
             if what == "resume":

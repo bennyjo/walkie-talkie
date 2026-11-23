@@ -110,7 +110,7 @@ What this can't stop:
 - **Spoken words have your keyboard's authority.** Within a call, the session does whatever it would do for a typed prompt, tools included.
 - **The mic is always live, with no wake word.** It can't tell who's speaking, so anyone close enough can become a prompt. Say "pause", or stop the app, when you talk to someone else.
 - **A spoken yes to a session is not a lock.** A session asked to confirm follows a rule, not a check. The fingerprint confirmation at a front desk is a check.
-- **A thief who takes the phone during a call** can talk to that one session until the call ends. They can't start another call, or switch to another session, without your fingerprint.
+- **A thief who takes the phone during a call** can talk to that one session only while the earbuds stay connected: the call ends at once when they disconnect, which includes running out of battery, and a new call needs your fingerprint. Say "hang up" to end it yourself. They can't start another call, or switch to another session, without your fingerprint.
 - **Processes running as you on the Mac** can reach the gateway's private folder and talk to a session. Such a process can already type into your terminals.
 - **A compromised Tailscale account** could reach the gateway's port. It would still need the token and your fingerprint. Use two-factor sign-in for Tailscale.
 

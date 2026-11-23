@@ -49,6 +49,6 @@ To use a phone again, pair it with `walkie-gateway serve --pair`.
 
 ## What this can't stop
 
-- **A thief who takes the phone during a call, locked or not,** can talk to that one session until the call ends: once nothing has been said for 30 minutes, after four hours at most, or at once when you revoke. They can't start another call, or switch to another session, without your fingerprint.
+- **A thief who takes the phone during a call, locked or not,** can talk to that one session only while the earbuds stay connected. The call ends at once when they disconnect, which includes running out of battery, and a new call needs your fingerprint. A thief who stays within radio range of your earbuds can still talk until you say "hang up" or revoke at the Mac, nothing has been said for 30 minutes, or four hours pass. They can't start another call, or switch to another session, without your fingerprint.
 - **Processes running as you on the Mac.** Any of them can read the socket's folder, so it can hear spoken words as text and speak in Claude's voice to your earbuds. It can also replace the phone's public key and grant itself a session, capture a grant at Start or ride a live call by polling the gateway in the session's name, or relay the gateway's traffic. Such a process can already read your sessions' transcripts and type into your terminals, so this adds little.
 - **A compromised Tailscale account** could reach the gateway's port. It would still need the token and your fingerprint to do anything. Use two-factor sign-in for Tailscale.
