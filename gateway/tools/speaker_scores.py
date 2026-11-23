@@ -4,8 +4,8 @@
     uv run --project gateway python gateway/tools/speaker_scores.py ~/walkie-gateway.log
 
 For each length of speech the thresholds tell apart, it prints how many messages were scored, their
-median, and the share that each threshold would have refused. Pick the highest threshold that refuses
-about 2% or less of your messages of 1.5 s or more. A threshold lower than the default lets more
+median, and the share that each threshold would have refused. For each threshold, pick the highest that
+refuses about 2% or less of your messages of 2 s or more. A threshold lower than the default lets more
 strangers through. Unchecked words are included, because they're mostly yours too.
 """
 import json

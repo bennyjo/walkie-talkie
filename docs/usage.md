@@ -151,7 +151,7 @@ The gateway logs to its terminal's standard error. To keep a week of lines, star
 uv run --project gateway python gateway/tools/speaker_scores.py ~/walkie-gateway.log
 ```
 
-For each length of speech, it prints how many messages were scored, their median, and the share each threshold would have refused. For the two longer lengths, pick the highest threshold that refuses about 2% or less of your messages. Going lower than the defaults lets more strangers through. For speech under 1.5 seconds, expect a higher share, and keep 0.35 unless your scores are much lower. Other people's speech the mic heard is in the log too, and it scores low, so a few low scores may not be yours.
+For each length of speech, it prints how many messages were scored, their median, and the share each threshold would have refused. For each threshold, pick the highest that refuses about 2% or less of your messages of 2 seconds or more. Going lower than the defaults lets more strangers through. For speech under 1.5 seconds, expect a higher share, and keep 0.35 unless your scores are much lower. Other people's speech the mic heard is in the log too, and it scores low, so a few low scores may not be yours.
 
 ### Enforce
 
