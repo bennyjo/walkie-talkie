@@ -19,6 +19,8 @@ public final class TalkGateTest {
         aClickDoesNotTrip();
         rumbleDoesNotTrip();
         losingTheEarbudsIsDetectedAndNothingElseIs();
+        aVoiceCountsAsSpeakingWithNoReplyAndEndsAfterAPause();
+        steadyBackgroundIsNotSpeaking();
         System.out.println("TalkGateTest: " + checks + " checks passed");
     }
 
@@ -95,6 +97,25 @@ public final class TalkGateTest {
                 frame[n] = (short) (3000 * Math.sin(2 * Math.PI * 40 * (i * FRAME + n) / RATE));
             }
             check(!gate.feed(frame, FRAME, true), "footsteps and wind are under the speech band");
+        }
+    }
+
+    private static void aVoiceCountsAsSpeakingWithNoReplyAndEndsAfterAPause() {
+        TalkGate gate = settled(-60);
+        check(!gate.speaking(), "quiet is not speaking");
+        for (int i = 0; i < 10; i++) gate.feed(voiced(-30, i), FRAME, false);
+        check(gate.speaking(), "a voice is speaking, with no reply sounding");
+        for (int i = 0; i < 10; i++) gate.feed(voiced(-80, i), FRAME, false);
+        check(gate.speaking(), "a short pause is still speaking");
+        for (int i = 0; i < 60; i++) gate.feed(voiced(-80, i), FRAME, false);
+        check(!gate.speaking(), "a long pause ends it");
+    }
+
+    private static void steadyBackgroundIsNotSpeaking() {
+        TalkGate gate = settled(-60);
+        for (int i = 0; i < 500; i++) {
+            gate.feed(voiced(-60, i), FRAME, false);
+            check(!gate.speaking(), "the background alone is not speaking");
         }
     }
 

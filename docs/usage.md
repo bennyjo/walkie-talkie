@@ -30,6 +30,8 @@ Every Start takes a fingerprint, and the fingerprint lets the phone talk to that
 | Hear "stopped at the keyboard" | Someone pressed Esc in that session, so it refuses spoken prompts. Say **type it** within 30 seconds to send that message through the session's own prompt box. Over the notice, a lone "type it" is too short to count, so say "yes, type that", or wait for the notice to end. Messages queued after it are dropped, and you hear that they were. This works only in herdr or tmux. In a plain terminal, you hear that it can't reach the terminal |
 | Hear "asking for a permission" | The session needs an answer at the keyboard. Tap to stop the turn |
 
+While a reply plays or you speak, the phone lowers other audio, such as music, so you hear the voice over it. The audio comes back to full volume about two seconds after both stop.
+
 ## Switch sessions
 
 You can move the call to another session without stopping it, in the app or by voice. The mod must run in that session too, so it's in the app's list. Sessions on different logins work the same way, so you can switch between a session on your work login and one on your personal login.

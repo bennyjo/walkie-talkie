@@ -25,6 +25,9 @@ final class MicPipe implements Runnable {
     interface Listener {
         /** From the capture thread: a voice over the reply. */
         void onTalkOver();
+
+        /** From the capture thread, every frame: whether someone is speaking into the mic. */
+        void onSpeaking(boolean speaking);
     }
 
     private static final String TAG = "walkie";
@@ -166,6 +169,7 @@ final class MicPipe implements Runnable {
         } catch (IOException | IllegalStateException e) {
             Log.e(TAG, "the microphone stopped: " + e.getClass().getSimpleName());
         } finally {
+            listener.onSpeaking(false);
             if (encoder != null) {
                 encoder.stop();
                 encoder.release();
@@ -197,6 +201,7 @@ final class MicPipe implements Runnable {
         while (running) {
             int gotBoth = Variant.readMic(context, record, both);
             if (gotBoth <= 0) {
+                listener.onSpeaking(false);
                 link.skipMic();
                 SystemClock.sleep(20);
                 continue;
@@ -208,6 +213,7 @@ final class MicPipe implements Runnable {
             allZeros = zeroFrames >= ZERO_FRAMES;
 
             if (gate.feed(samples, got, speaker.sounding()) && open) listener.onTalkOver();
+            listener.onSpeaking(open && gate.speaking());
             level = Math.max(level, gate.level());
             floor = gate.floor();
             leak = gate.leak();

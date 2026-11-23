@@ -27,7 +27,7 @@ Run these from the repository root.
 | Mod checks | `claude plugin validate mod/walk-voice` |
 | Phone APK | `android/build.sh` |
 | Emulator test APK | `android/build.sh --debug` |
-| Talk-over gate tests, with no device | `android/build.sh --test` |
+| Talk-over gate and audio-ducking tests, with no device | `android/build.sh --test` |
 
 The build needs no Gradle. It downloads a JDK and Android's build tools into `android/.toolchain/`, about 570 MB, and checks their checksums. Nothing is installed system-wide. To keep one signing key across builds, so an update installs over the last version, set `WALKIE_KEYSTORE` to a path outside the repository.
 
@@ -48,7 +48,7 @@ The build needs no Gradle. It downloads a JDK and Android's build tools into `an
 | `mod/walk-voice/hooks/register.js` | The mod, including which logins and folders may connect, and its check of the fingerprint |
 | `mod/walk-voice/hooks/p256.js` | The mod's check of a P-256 signature |
 | `mod/walk-voice/hooks/front-desk.js` | The mod's front-desk role and its rules for the model and the primary |
-| `android/src/main/` | The app. `TalkService` runs the conversation, `TalkGate` hears a voice over a reply, and `PhoneKey` holds the hardware key |
+| `android/src/main/` | The app. `TalkService` runs the conversation, `TalkGate` hears a voice over a reply, `Ducker` lowers other audio while a reply plays or you speak, and `PhoneKey` holds the hardware key |
 | `android/src/debug/` | The test allowances, which the phone's APK doesn't contain |
 
 ## Test without a phone

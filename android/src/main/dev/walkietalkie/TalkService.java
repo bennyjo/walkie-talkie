@@ -10,6 +10,8 @@ import android.content.Intent;
 import android.content.pm.ServiceInfo;
 import android.media.AudioDeviceCallback;
 import android.media.AudioDeviceInfo;
+import android.media.AudioAttributes;
+import android.media.AudioFocusRequest;
 import android.media.AudioManager;
 import android.media.AudioRouting;
 import android.media.session.MediaSession;
@@ -97,6 +99,7 @@ public class TalkService extends Service implements GatewayLink.Listener, Speake
     private GatewayLink link;
     private MicPipe mic;
     private SpeakerPipe speaker;
+    private Ducker ducker;
     private boolean started;
     private boolean micProblem;
     private String shownText = "";
@@ -183,6 +186,22 @@ public class TalkService extends Service implements GatewayLink.Listener, Speake
         session.setActive(true);
 
         link = new GatewayLink(this, pairing, this, run, approve);
+        ducker = new Ducker(new Ducker.Focus() {
+            // May-duck focus makes Android lower other apps' audio, such as music, and restore it on abandon.
+            private final AudioFocusRequest request = new AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+                    .setAudioAttributes(new AudioAttributes.Builder()
+                            .setUsage(AudioAttributes.USAGE_MEDIA)
+                            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
+                    .build();
+
+            @Override public void request() {
+                audio.requestAudioFocus(request);
+            }
+
+            @Override public void abandon() {
+                audio.abandonAudioFocusRequest(request);
+            }
+        }, SystemClock::elapsedRealtime);
         speaker = new SpeakerPipe(this);
         mic = new MicPipe(this, link, speaker, this);
         try {
@@ -190,6 +209,7 @@ public class TalkService extends Service implements GatewayLink.Listener, Speake
             mic.start(usbInput());
         } catch (IOException | RuntimeException e) {
             Log.e(TAG, "couldn't start audio: " + e.getClass().getSimpleName());
+            ducker.close();
             status.why = "Couldn't start audio";
             stopSelf();
             return;
@@ -219,6 +239,7 @@ public class TalkService extends Service implements GatewayLink.Listener, Speake
         getSystemService(NotificationManager.class).cancel(CONFIRM_NOTIFICATION);
         if (mic != null) mic.stop();
         if (speaker != null) speaker.stop();
+        if (ducker != null) ducker.close();
         if (started) {
             audio.unregisterAudioDeviceCallback(deviceWatch);
             send(new JSONObject(), "release");
@@ -548,6 +569,14 @@ public class TalkService extends Service implements GatewayLink.Listener, Speake
 
     @Override public void onGatewayReset() {
         speaker.resetGenerations();
+    }
+
+    @Override public void onSounding(boolean sounding) {
+        ducker.setReply(sounding);
+    }
+
+    @Override public void onSpeaking(boolean speaking) {
+        ducker.setSpeech(speaking);
     }
 
     @Override public void onSpeechStarted() {
