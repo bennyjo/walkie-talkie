@@ -1458,6 +1458,11 @@ test('a login whose given name is denied goes unnamed', async ($, on) => {
   expect(seen.polls[0].login).toBe('')
 })
 
+test('a login whose given name holds a denied word goes unnamed', async ($, on) => {
+  const seen = await quiet($, on, { config: { logins: { [PERSONAL]: { deny: [], name: 'acme work' } }, deny: ['acme'] } })
+  expect(seen.polls[0].login).toBe('')
+})
+
 // A Firstmate secondmate home declares which secondmate it is in a marker file at its root.
 const MARKER = '/work/project/.fm-secondmate-home'
 const markerFile = (isLink = false) => (path) =>
