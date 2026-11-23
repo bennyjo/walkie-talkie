@@ -371,7 +371,7 @@ final class GatewayLink {
         seals[0] = new FrameSeal(key, FrameSeal.PHONE_TO_GATEWAY);
         seals[1] = new FrameSeal(key, FrameSeal.GATEWAY_TO_PHONE);
         byte[] plain = readSealed(in, seals[1]);
-        if (plain[0] != CONTROL) throw new IOException("bad frame");
+        if (plain[0] != CONTROL) throw new GeneralSecurityException("the gateway's answer isn't a control frame");
         JSONObject answer = new JSONObject(new String(plain, 1, plain.length - 1, StandardCharsets.UTF_8));
         byte[] expected = hex(mac("gateway", serverNonce, clientNonce)).getBytes(StandardCharsets.US_ASCII);
         byte[] given = answer.getString("mac").getBytes(StandardCharsets.US_ASCII);
@@ -449,11 +449,12 @@ final class GatewayLink {
         }
     }
 
-    /** The type and payload inside the next frame, which must be sealed: anything else ends the connection. */
+    /** The type and payload inside the next frame, which must be sealed: anything else fails as unproven and ends the connection. */
     private static byte[] readSealed(DataInputStream in, FrameSeal seal) throws IOException, GeneralSecurityException {
         int length = in.readInt();
         int type = in.readUnsignedByte();
-        if (type != SEALED || length < 0 || length > MAX_FRAME) throw new IOException("bad frame");
+        if (type != SEALED) throw new GeneralSecurityException("an unsealed frame");
+        if (length < 0 || length > MAX_FRAME) throw new IOException("bad frame");
         byte[] body = new byte[length];
         in.readFully(body);
         return seal.open(body);
