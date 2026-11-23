@@ -4,6 +4,9 @@
   Any other address is refused, and there's no fallback to all interfaces.
 - The phone and the gateway prove to each other that they hold the same 256-bit token.
   The token never crosses the connection after pairing.
+- Every frame after that proof is encrypted and authenticated by the app and the gateway
+  themselves, under a key made for that one connection from the token and both sides' login
+  nonces. Tailscale is a second layer, not the only one.
 - Pairing takes a short-lived code, read off the Mac's screen and typed into the phone. The phone
   also hands over the public half of a key it made in its own secure hardware, which signs only
   after a fingerprint. A pairing lasts PAIRING_DAYS.
@@ -21,12 +24,14 @@ import math
 import os
 import secrets
 import stat
+import struct
 import subprocess
 import time
 
-from cryptography.exceptions import InvalidSignature
+from cryptography.exceptions import InvalidSignature, InvalidTag
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 TAILNET = ipaddress.ip_network("100.64.0.0/10")
 PAIR_SECONDS = 120
@@ -104,12 +109,53 @@ def gateway_mac(token, server_nonce, client_nonce):
 
 
 def _mac(token, role, server_nonce, client_nonce):
-    message = "|".join((role, server_nonce, client_nonce)).encode()
-    return hmac.new(bytes.fromhex(token), message, hashlib.sha256).hexdigest()
+    return _keyed(token, role, server_nonce, client_nonce).hexdigest()
+
+
+def _keyed(token, label, server_nonce, client_nonce):
+    message = "|".join((label, server_nonce, client_nonce)).encode()
+    return hmac.new(bytes.fromhex(token), message, hashlib.sha256)
+
+
+def frame_key(token, server_nonce, client_nonce):
+    """The key that seals one connection's frames: the token's HMAC over both login nonces, under
+    its own label, so neither login proof gives it away. A new login makes a new key."""
+    return _keyed(token, "frames", server_nonce, client_nonce).digest()
 
 
 def new_nonce():
     return secrets.token_hex(16)
+
+
+PHONE_TO_GATEWAY, GATEWAY_TO_PHONE = 1, 2
+
+
+class Seal:
+    """One connection's encryption: AES-256-GCM under frame_key. Each direction counts the frames
+    it has sealed, and that count is the nonce, so a frame opens only once, only in the order it
+    was sealed, only in its own direction, and only on the connection it was sealed for.
+    Anything else, including a changed byte, fails to open, and the connection is over.
+    """
+
+    NONCE = struct.Struct(">IQ")    # the direction, then the count of frames that way
+    TAG_BYTES = 16
+
+    def __init__(self, key, sending):
+        self.aead = AESGCM(key)
+        self.sending, self.receiving = sending, (PHONE_TO_GATEWAY + GATEWAY_TO_PHONE) - sending
+        self.sealed = self.opened = 0
+
+    def seal(self, data):
+        self.sealed += 1
+        return self.aead.encrypt(self.NONCE.pack(self.sending, self.sealed), data, None)
+
+    def open(self, data):
+        """The data inside, or SecurityError. A frame that fails to open ends the connection."""
+        self.opened += 1
+        try:
+            return self.aead.decrypt(self.NONCE.pack(self.receiving, self.opened), data, None)
+        except InvalidTag:
+            raise SecurityError("a frame failed to open: changed, replayed, out of order, or under another key") from None
 
 
 def phone_key(text):

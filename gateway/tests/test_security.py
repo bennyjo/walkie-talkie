@@ -32,6 +32,93 @@ class BindTest(unittest.TestCase):
         self.assertFalse(security.is_tailnet("fe80::1"))
 
 
+class SealTest(unittest.TestCase):
+    """One connection's encryption: what opens, and what doesn't."""
+
+    TOKEN = "ab" * 32
+
+    def pair(self, token=TOKEN, server_nonce="1" * 32, client_nonce="2" * 32):
+        key = security.frame_key(token, server_nonce, client_nonce)
+        return security.Seal(key, security.PHONE_TO_GATEWAY), security.Seal(key, security.GATEWAY_TO_PHONE)
+
+    def test_the_key_comes_from_the_token_and_both_nonces_and_gives_no_proof_away(self):
+        key = security.frame_key(self.TOKEN, "1" * 32, "2" * 32)
+        self.assertEqual(len(key), 32)
+        self.assertEqual(key, security.frame_key(self.TOKEN, "1" * 32, "2" * 32))
+        self.assertNotEqual(key, security.frame_key("cd" * 32, "1" * 32, "2" * 32))
+        self.assertNotEqual(key, security.frame_key(self.TOKEN, "3" * 32, "2" * 32))
+        self.assertNotEqual(key, security.frame_key(self.TOKEN, "1" * 32, "3" * 32))
+        for proof in (security.phone_mac(self.TOKEN, "1" * 32, "2" * 32), security.gateway_mac(self.TOKEN, "1" * 32, "2" * 32)):
+            self.assertNotEqual(key, bytes.fromhex(proof))
+
+    def test_a_round_trip_each_way(self):
+        phone, gateway = self.pair()
+        for text in (b"", b"one", b"two", bytes(range(256)) * 60):
+            self.assertEqual(gateway.open(phone.seal(text)), text)
+            self.assertEqual(phone.open(gateway.seal(text)), text)
+
+    def test_the_wire_hides_the_words(self):
+        phone, _ = self.pair()
+        data = phone.seal(b"a few spoken words")
+        self.assertNotIn(b"spoken", data)
+        self.assertEqual(len(data), len(b"a few spoken words") + security.Seal.TAG_BYTES)
+        self.assertNotEqual(phone.seal(b"again"), phone.seal(b"again"))  # no two frames alike
+
+    def test_a_changed_byte_fails_to_open(self):
+        phone, gateway = self.pair()
+        data = bytearray(phone.seal(b"hello"))
+        for i in (0, len(data) // 2, len(data) - 1):
+            changed = bytearray(data)
+            changed[i] ^= 0x40
+            with self.assertRaises(security.SecurityError):
+                self.pair()[1].open(bytes(changed))
+        self.assertEqual(gateway.open(bytes(data)), b"hello")
+
+    def test_a_replayed_frame_fails_to_open(self):
+        phone, gateway = self.pair()
+        data = phone.seal(b"once")
+        self.assertEqual(gateway.open(data), b"once")
+        with self.assertRaises(security.SecurityError):
+            gateway.open(data)
+
+    def test_frames_out_of_order_fail_to_open(self):
+        phone, gateway = self.pair()
+        first, second = phone.seal(b"first"), phone.seal(b"second")
+        with self.assertRaises(security.SecurityError):
+            gateway.open(second)
+        fresh = self.pair()[1]
+        self.assertEqual(fresh.open(first), b"first")
+        self.assertEqual(fresh.open(second), b"second")
+
+    def test_a_skipped_frame_fails_to_open(self):
+        phone, gateway = self.pair()
+        phone.seal(b"lost on the way")
+        with self.assertRaises(security.SecurityError):
+            gateway.open(phone.seal(b"next"))
+
+    def test_the_wrong_key_fails_to_open(self):
+        phone, _ = self.pair()
+        data = phone.seal(b"hello")
+        for other in (self.pair(token="cd" * 32), self.pair(server_nonce="9" * 32), self.pair(client_nonce="9" * 32)):
+            with self.assertRaises(security.SecurityError):
+                other[1].open(data)
+
+    def test_a_frame_opens_only_in_its_own_direction(self):
+        phone, gateway = self.pair()
+        with self.assertRaises(security.SecurityError):
+            phone.open(phone.seal(b"to the gateway"))
+        with self.assertRaises(security.SecurityError):
+            gateway.open(gateway.seal(b"to the phone"))
+
+    def test_a_failure_does_not_unlock_the_next_frame(self):
+        phone, gateway = self.pair()
+        good = phone.seal(b"good")
+        with self.assertRaises(security.SecurityError):
+            gateway.open(b"\0" * 20)
+        with self.assertRaises(security.SecurityError):
+            gateway.open(good)  # the count moved on: the connection is over
+
+
 class PairingWindowTest(unittest.TestCase):
     def test_a_good_code_works_once(self):
         window = security.PairingWindow(Clock())

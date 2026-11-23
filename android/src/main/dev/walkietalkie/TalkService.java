@@ -182,7 +182,7 @@ public class TalkService extends Service implements GatewayLink.Listener, Speake
                 .setActions(PlaybackState.ACTION_PLAY_PAUSE).build());
         session.setActive(true);
 
-        link = new GatewayLink(pairing, this, run, approve);
+        link = new GatewayLink(this, pairing, this, run, approve);
         speaker = new SpeakerPipe(this);
         mic = new MicPipe(this, link, speaker, this);
         try {

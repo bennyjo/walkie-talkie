@@ -36,7 +36,7 @@ Three pieces, all in this repository:
 | Mod, `mod/walk-voice/` | Inside each Claude Code session | Lists the session on the phone, checks your fingerprint, sends your words in as your own prompt, and passes the reply to the gateway to be spoken |
 
 ```text
-collar mic --> USB receiver --> phone app --(Tailscale)--> Mac gateway --(Unix socket)--> mod in a Claude Code session
+collar mic --> USB receiver --> phone app --(encrypted, over Tailscale)--> Mac gateway --(Unix socket)--> mod in a Claude Code session
 earbuds <----------------------- phone app <---------------- Mac gateway <---------------- reply
 ```
 
@@ -101,7 +101,8 @@ To talk to a session, someone needs all of these at once: a device on your tailn
 
 - **A fingerprint at every Start.** The fingerprint unlocks a key in the phone's secure hardware for one signature. Both the gateway and the session check it before the session takes a single spoken prompt. A switch to another session, in the app or by voice, takes a fingerprint the same way.
 - **Calls end on their own.** At **Stop**, after 30 minutes with nothing said, after 2 minutes without the phone, and after four hours at most. The next call takes a new fingerprint.
-- **Private network only.** The gateway listens only on the Mac's Tailscale address, accepts only the one paired phone, and both sides prove they hold the token before any audio flows.
+- **Private network only.** The gateway listens only on the Mac's Tailscale address, accepts only the one paired phone, and both sides prove they hold the token before any audio flows. The app dials the Mac only through the VPN network: with Tailscale off on the phone, it sends nothing.
+- **The call is encrypted by the app and the gateway themselves.** Every frame after the login is encrypted and authenticated with a key made for that one connection from the pairing token and both sides' login nonces. Tailscale is a second layer around it, not the only one.
 - **Only the sessions you allow.** The mod connects only on the logins you name, and you can deny folders and repositories so they never show on the phone.
 - **Speech stays on your Mac.** No cloud speech service, crash reporter, or analytics. The gateway never logs audio or words. Claude Code sends your prompts and replies to Anthropic, as it does when you type.
 
@@ -112,7 +113,7 @@ What this can't stop:
 - **A spoken yes to a session is not a lock.** A session asked to confirm follows a rule, not a check. The fingerprint confirmation at a front desk is a check.
 - **A thief who takes the phone during a call** can talk to that one session only while the earbuds stay connected: the call ends at once when they disconnect, which includes running out of battery, and a new call needs your fingerprint. Say "hang up" to end it yourself. They can't start another call, or switch to another session, without your fingerprint.
 - **Processes running as you on the Mac** can reach the gateway's private folder and talk to a session. Such a process can already type into your terminals.
-- **A compromised Tailscale account** could reach the gateway's port. It would still need the token and your fingerprint. Use two-factor sign-in for Tailscale.
+- **A compromised Tailscale account** could reach the gateway's port, or put a device between the phone and the Mac. It still couldn't read or change a call, or start one, without the token and your fingerprint. Use two-factor sign-in for Tailscale.
 
 If you lose your phone, remove it in the [Tailscale admin console](https://login.tailscale.com/admin/machines), then run this on the Mac:
 

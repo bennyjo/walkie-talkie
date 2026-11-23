@@ -1,5 +1,9 @@
 package dev.walkietalkie;
 
+import android.content.Context;
+import android.net.ConnectivityManager;
+import android.net.Network;
+import android.net.NetworkCapabilities;
 import android.os.SystemClock;
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
@@ -19,7 +23,9 @@ import java.security.SecureRandom;
 import java.util.ArrayDeque;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
+import javax.crypto.Cipher;
 import javax.crypto.Mac;
+import javax.crypto.spec.GCMParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -29,6 +35,10 @@ import org.json.JSONObject;
  * the protocol. The tailnet address doesn't change as the phone moves between networks, so a
  * connection often survives a move. When one doesn't, this reconnects, and each side resends what
  * the other missed.
+ *
+ * The socket is bound to the VPN network, so the Mac's address is never dialled over any other.
+ * After the login, every frame each way is sealed under a key made for that one connection, so
+ * Tailscale is a second layer around the call, not the only one.
  *
  * Without an approval it only shows the list of sessions. With one, the first login carries the
  * fingerprint's signature, and later logins resume that run for as long as the gateway keeps it.
@@ -46,7 +56,7 @@ final class GatewayLink {
         boolean onLogin(JSONObject answer);
     }
 
-    private static final int CONTROL = 1, MIC = 2, SPEECH = 3;
+    private static final int CONTROL = 1, MIC = 2, SPEECH = 3, SEALED = 4;
     private static final int MAX_FRAME = 16384;
     private static final int CONNECT_TIMEOUT_MS = 5000;
     private static final int LOGIN_TIMEOUT_MS = 5000;
@@ -67,6 +77,56 @@ final class GatewayLink {
         }
     }
 
+    /** Tailscale isn't connected on this phone: there's no VPN network to reach the Mac through. */
+    private static final class NoVpnException extends IOException {
+        private static final long serialVersionUID = 1L;
+        NoVpnException() {
+            super("no vpn");
+        }
+    }
+
+    /**
+     * One connection's encryption, as the gateway's security.Seal: AES-256-GCM under the login's
+     * key, with a nonce that counts the frames sealed in each direction. So a frame opens only once,
+     * only in order, only in its own direction, and only on the connection it was sealed for.
+     * Each one is used from one thread: the sender's on the way out, the reader's on the way in.
+     */
+    static final class FrameSeal {
+        static final int PHONE_TO_GATEWAY = 1, GATEWAY_TO_PHONE = 2;
+        private static final int TAG_BITS = 128;
+
+        private final Cipher cipher;
+        private final SecretKeySpec key;
+        private final int direction;
+        private long count;
+
+        FrameSeal(byte[] key, int direction) throws GeneralSecurityException {
+            this.cipher = Cipher.getInstance("AES/GCM/NoPadding");
+            this.key = new SecretKeySpec(key, "AES");
+            this.direction = direction;
+        }
+
+        /** A plain frame, sealed for the wire: its type and payload are the secret, its length isn't. */
+        byte[] seal(byte[] plain) throws GeneralSecurityException {
+            cipher.init(Cipher.ENCRYPT_MODE, key, new GCMParameterSpec(TAG_BITS, nonce()));
+            byte[] body = cipher.doFinal(plain, 4, plain.length - 4);
+            return ByteBuffer.allocate(5 + body.length).putInt(body.length).put((byte) SEALED).put(body).array();
+        }
+
+        /** The type and payload inside a sealed frame's payload, or an exception: the connection is over. */
+        byte[] open(byte[] body) throws GeneralSecurityException {
+            cipher.init(Cipher.DECRYPT_MODE, key, new GCMParameterSpec(TAG_BITS, nonce()));
+            byte[] plain = cipher.doFinal(body);
+            if (plain.length == 0) throw new GeneralSecurityException("an empty frame");
+            return plain;
+        }
+
+        private byte[] nonce() {
+            return ByteBuffer.allocate(12).putInt(direction).putLong(++count).array();
+        }
+    }
+
+    private final Context context;
     private final Pairing pairing;
     private final Listener listener;
     private final String run;
@@ -85,12 +145,13 @@ final class GatewayLink {
     private Thread reader;
 
     /** A link that only lists sessions. */
-    GatewayLink(Pairing pairing, Listener listener) {
-        this(pairing, listener, newRun(), null);
+    GatewayLink(Context context, Pairing pairing, Listener listener) {
+        this(context, pairing, listener, newRun(), null);
     }
 
     /** A run a fingerprint approved: approve holds the session, the challenges, and the signature over them and run. */
-    GatewayLink(Pairing pairing, Listener listener, String run, JSONObject approve) {
+    GatewayLink(Context context, Pairing pairing, Listener listener, String run, JSONObject approve) {
+        this.context = context.getApplicationContext();
         this.pairing = pairing;
         this.listener = listener;
         this.run = run;
@@ -197,13 +258,14 @@ final class GatewayLink {
             socket = s;
             try {
                 s.setTcpNoDelay(true);
-                s.connect(new InetSocketAddress(pairing.host, PORT), CONNECT_TIMEOUT_MS);
+                connect(context, s, pairing.host);
                 DataInputStream in = new DataInputStream(new BufferedInputStream(s.getInputStream()));
                 DataOutputStream out = new DataOutputStream(new BufferedOutputStream(s.getOutputStream()));
                 s.setSoTimeout(LOGIN_TIMEOUT_MS);
                 long up;
+                FrameSeal[] seals = new FrameSeal[2];
                 try {
-                    up = login(in, out);
+                    up = login(in, out, seals);
                 } catch (EOFException e) {
                     throw new EOFException("refused"); // the gateway closed the door during the login
                 }
@@ -218,10 +280,11 @@ final class GatewayLink {
                 }
                 goOnline(up);
                 listener.onConnection(true, null);
-                sender = new Thread(() -> sendLoop(out), "walkie-send");
+                FrameSeal sending = seals[0];
+                sender = new Thread(() -> sendLoop(out, sending), "walkie-send");
                 sender.start();
                 backoff = 500;
-                readLoop(in);
+                readLoop(in, seals[1]);
             } catch (IOException | JSONException | GeneralSecurityException e) {
                 why = why(s, e);
             } finally {
@@ -241,6 +304,7 @@ final class GatewayLink {
 
     /** Says what's wrong in words that name the fix. */
     private static String why(Socket s, Exception e) {
+        if (e instanceof NoVpnException) return "Tailscale isn't connected on this phone. Turn it on";
         if (e instanceof EOFException && "refused".equals(e.getMessage())) {
             return "Your Mac refused this phone. Wait a minute, then tap Pair again if it still fails";
         }
@@ -253,6 +317,22 @@ final class GatewayLink {
         }
         if (e instanceof GeneralSecurityException) return "Your Mac's answer didn't prove it's your Mac";
         return "Can't reach your Mac. Check Tailscale on both devices, and check the Mac is awake";
+    }
+
+    /**
+     * Connects through the VPN network, and only that one: with Tailscale off, nothing is sent to the
+     * Mac's address over whatever other network the phone has. The emulator's build reaches its own
+     * host without a VPN.
+     */
+    private static void connect(Context context, Socket s, String host) throws IOException {
+        if (!Variant.TEST || Pairing.tailnetAddress(host)) {
+            ConnectivityManager networks = context.getSystemService(ConnectivityManager.class);
+            Network active = networks.getActiveNetwork();
+            NetworkCapabilities what = active == null ? null : networks.getNetworkCapabilities(active);
+            if (what == null || !what.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) throw new NoVpnException();
+            active.bindSocket(s);
+        }
+        s.connect(new InetSocketAddress(host, PORT), CONNECT_TIMEOUT_MS);
     }
 
     private void closeSocket() {
@@ -268,9 +348,11 @@ final class GatewayLink {
 
     /**
      * Each side proves it holds the token. No audio goes out until the gateway has proved it. Returns
-     * the gateway's last mic sequence, or Long.MIN_VALUE when the listener ends the link.
+     * the gateway's last mic sequence, or Long.MIN_VALUE when the listener ends the link, and leaves
+     * this connection's seals in seals: the sending one, then the receiving one. The gateway's answer
+     * is already sealed, so an answer that opens is itself proof that the gateway holds the token.
      */
-    private long login(DataInputStream in, DataOutputStream out)
+    private long login(DataInputStream in, DataOutputStream out, FrameSeal[] seals)
             throws IOException, JSONException, GeneralSecurityException {
         JSONObject challenge = readControl(in);
         String serverNonce = challenge.getString("nonce");
@@ -278,15 +360,20 @@ final class GatewayLink {
         JSONObject auth = new JSONObject()
                 .put("t", "auth")
                 .put("nonce", clientNonce)
-                .put("mac", mac("phone", serverNonce, clientNonce))
+                .put("mac", hex(mac("phone", serverNonce, clientNonce)))
                 .put("run", run)
                 .put("down", lastSpeechSeq);
         JSONObject signed = approve;
         if (signed != null) auth.put("approve", signed);
         out.write(controlFrame(auth));
         out.flush();
-        JSONObject answer = readControl(in);
-        byte[] expected = mac("gateway", serverNonce, clientNonce).getBytes(StandardCharsets.US_ASCII);
+        byte[] key = mac("frames", serverNonce, clientNonce);
+        seals[0] = new FrameSeal(key, FrameSeal.PHONE_TO_GATEWAY);
+        seals[1] = new FrameSeal(key, FrameSeal.GATEWAY_TO_PHONE);
+        byte[] plain = readSealed(in, seals[1]);
+        if (plain[0] != CONTROL) throw new GeneralSecurityException("the gateway's answer isn't a control frame");
+        JSONObject answer = new JSONObject(new String(plain, 1, plain.length - 1, StandardCharsets.UTF_8));
+        byte[] expected = hex(mac("gateway", serverNonce, clientNonce)).getBytes(StandardCharsets.US_ASCII);
         byte[] given = answer.getString("mac").getBytes(StandardCharsets.US_ASCII);
         if (!MessageDigest.isEqual(expected, given)) {
             throw new GeneralSecurityException("the gateway failed to prove it holds the token");
@@ -311,7 +398,8 @@ final class GatewayLink {
         }
     }
 
-    private void sendLoop(DataOutputStream out) {
+    /** Queued frames are plain, and each is sealed as it goes out, so a resend is sealed for the connection it goes on. */
+    private void sendLoop(DataOutputStream out, FrameSeal seal) {
         long lastPing = 0;
         try {
             while (true) {
@@ -322,16 +410,16 @@ final class GatewayLink {
                 }
                 byte[] frame = outgoing.poll(1, TimeUnit.SECONDS);
                 if (frame == null) continue;
-                out.write(frame);
+                out.write(seal.seal(frame));
                 Thread.sleep(BATCH_MS);
-                while ((frame = outgoing.poll()) != null) out.write(frame);
+                while ((frame = outgoing.poll()) != null) out.write(seal.seal(frame));
                 out.flush();
                 if (!running && outgoing.isEmpty()) {
                     closeSocket();
                     return;
                 }
             }
-        } catch (IOException | JSONException e) {
+        } catch (IOException | JSONException | GeneralSecurityException e) {
             closeSocket(); // the reader wakes up and reconnects
         } catch (InterruptedException e) {
             // This connection is over.
@@ -339,20 +427,18 @@ final class GatewayLink {
     }
 
     /** Ends when the socket closes, so a stop can't cut off what's still being sent. */
-    private void readLoop(DataInputStream in) throws IOException, JSONException {
+    private void readLoop(DataInputStream in, FrameSeal seal) throws IOException, JSONException, GeneralSecurityException {
         while (true) {
-            int length = in.readInt();
-            int type = in.readUnsignedByte();
-            if (length < 0 || length > MAX_FRAME) throw new IOException("bad frame length");
-            byte[] payload = new byte[length];
-            in.readFully(payload);
+            byte[] plain = readSealed(in, seal);
+            int type = plain[0] & 0xff;
+            int length = plain.length - 1;
             if (type == SPEECH && length >= 6) {
-                ByteBuffer header = ByteBuffer.wrap(payload);
+                ByteBuffer header = ByteBuffer.wrap(plain, 1, 6);
                 lastSpeechSeq = header.getInt() & 0xffffffffL;
                 int generation = header.getShort() & 0xffff;
-                listener.onSpeech(generation, payload, 6, length - 6);
+                listener.onSpeech(generation, plain, 7, length - 6);
             } else if (type == CONTROL) {
-                JSONObject message = new JSONObject(new String(payload, StandardCharsets.UTF_8));
+                JSONObject message = new JSONObject(new String(plain, 1, length, StandardCharsets.UTF_8));
                 if (message.optString("t").equals("pong")) {
                     roundTripMs = SystemClock.elapsedRealtime() - message.optLong("ms");
                 } else {
@@ -363,10 +449,24 @@ final class GatewayLink {
         }
     }
 
-    /** Trades a pairing code and the phone's public key for the token. Blocks: call it off the main thread. */
-    static String pair(String host, String code, String publicKey) throws IOException, JSONException {
+    /** The type and payload inside the next frame, which must be sealed: anything else fails as unproven and ends the connection. */
+    private static byte[] readSealed(DataInputStream in, FrameSeal seal) throws IOException, GeneralSecurityException {
+        int length = in.readInt();
+        int type = in.readUnsignedByte();
+        if (type != SEALED) throw new GeneralSecurityException("an unsealed frame");
+        if (length < 0 || length > MAX_FRAME) throw new IOException("bad frame");
+        byte[] body = new byte[length];
+        in.readFully(body);
+        return seal.open(body);
+    }
+
+    /**
+     * Trades a pairing code and the phone's public key for the token. Blocks: call it off the main
+     * thread. There's no token to seal with yet, so this one exchange relies on the tailnet.
+     */
+    static String pair(Context context, String host, String code, String publicKey) throws IOException, JSONException {
         try (Socket s = new Socket()) {
-            s.connect(new InetSocketAddress(host, PORT), CONNECT_TIMEOUT_MS);
+            connect(context, s, host);
             s.setSoTimeout(LOGIN_TIMEOUT_MS);
             DataInputStream in = new DataInputStream(new BufferedInputStream(s.getInputStream()));
             DataOutputStream out = new DataOutputStream(new BufferedOutputStream(s.getOutputStream()));
@@ -393,11 +493,12 @@ final class GatewayLink {
         return frame.array();
     }
 
-    private String mac(String role, String serverNonce, String clientNonce) throws GeneralSecurityException {
+    /** The token's HMAC over both nonces under a label: "phone" and "gateway" are the proofs, "frames" the key. */
+    private byte[] mac(String label, String serverNonce, String clientNonce) throws GeneralSecurityException {
         Mac hmac = Mac.getInstance("HmacSHA256");
         hmac.init(new SecretKeySpec(unhex(pairing.token), "HmacSHA256"));
-        String message = role + "|" + serverNonce + "|" + clientNonce;
-        return hex(hmac.doFinal(message.getBytes(StandardCharsets.US_ASCII)));
+        String message = label + "|" + serverNonce + "|" + clientNonce;
+        return hmac.doFinal(message.getBytes(StandardCharsets.US_ASCII));
     }
 
     private static byte[] randomBytes(int count) {
