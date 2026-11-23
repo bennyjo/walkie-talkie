@@ -77,13 +77,16 @@ def read_pace(text):
     if not lines or lines[0].strip() != "---" or end is None:
         return pace  # no front matter, as the mod reads it too
     for line in lines[1:end]:
+        if not line.strip():
+            continue
         key, _, value = line.partition(":")
-        key = key.strip().lower().replace("-", "_").replace(" ", "_")
+        key = key.strip()
         if key not in PACE:
+            log.warning("the talk file sets %s, which isn't one of %s, so it's ignored", key, ", ".join(PACE))
             continue
         _, low, high = PACE[key]
         try:
-            number = float(value.split("#")[0].strip().rstrip("s").strip())
+            number = float(value)
         except ValueError:
             number = None
         if number is not None and low <= number <= high:

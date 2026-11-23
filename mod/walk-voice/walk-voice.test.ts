@@ -400,6 +400,27 @@ test('without a talk file, the shipped rules ask for a short acknowledgement, no
   expect(rules).toContain('~/.config/walkie-talkie/talk.md')
 })
 
+// The default talk file shown in the docs' "How it talks" section.
+const DOCUMENTED_RULES = `Write for the ear:
+
+- Start with the verdict or answer in one sentence: done, not done, blocked, or the answer itself.
+- When they tell you to do something, don't repeat their request back to them. They know what they asked. Acknowledge it in a few words at most, and say only what they don't know yet.
+- Then give at most three short points: what changed, whether you verified it, and what needs their decision.
+- Keep the whole reply under about 100 words, in plain conversational sentences.
+- Their prompts are recognised speech, so read past misheard words, and ask when the meaning is unclear.
+- If you're blocked, say so and ask the one question that unblocks you.`
+
+test('without a talk file, the session gets the documented default rules and pace', async ($, on) => {
+  const rules = await rulesWith(on, $, null)
+  expect(rules).toContain(DOCUMENTED_RULES)
+  expect(rules).toContain('speed is 0.9, sentence_pause 0.4, and paragraph_pause 0.9')
+})
+
+test('a request to talk differently keeps the rest of the style rules', async ($, on) => {
+  const rules = await rulesWith(on, $, null)
+  expect(rules).toContain('start from the style rules you were given above and change only what they asked')
+})
+
 test('the talk file replaces the style rules, but not the one-reply framing or what is never read out', async ($, on) => {
   const rules = await rulesWith(on, $, '---\nspeed: 0.8\n---\n\nTalk like a friend on a walk. Two sentences at most.\n')
   expect(rules).toContain('Talk like a friend on a walk. Two sentences at most.')

@@ -2111,28 +2111,25 @@ class ConversationTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(read_pace(""), defaults)
         self.assertEqual(read_pace("speed: 0.5\nNo front matter, so these are rules.\n"), defaults)
         self.assertEqual(read_pace("---\nspeed: 0.5\nNever closed, so these are rules too.\n"), defaults)
-        with self.assertLogs("walkie.speech", "WARNING"):
-            pace = read_pace("---\nSpeed: 0.75\nparagraph-pause: 2s  # seconds\nsentence pause: 9\n"
-                             "colour: blue\n---\nsentence_pause: 0.1\n")
+        with self.assertLogs("walkie.speech", "WARNING") as logs:
+            pace = read_pace("---\nspeed: 0.75\n\nparagraph_pause: 2\nsentence_pause: 9\n---\nsentence_pause: 0.1\n")
         self.assertEqual(pace, dict(defaults, speed=0.75, paragraph_pause=2.0))
+        self.assertEqual(len(logs.output), 1)
+        for line in ("Speed: 0.75", "paragraph-pause: 2", "sentence pause: 1", "colour: blue",
+                     "paragraph_pause: 2s", "speed: 0.75  # slower"):
+            with self.assertLogs("walkie.speech", "WARNING"):
+                self.assertEqual(read_pace("---\n%s\n---\n" % line), defaults)
         with self.assertLogs("walkie.speech", "WARNING"):
             self.assertEqual(read_pace("---\nspeed: fast\n---\n"), defaults)
 
-    def test_the_documented_talk_file_is_what_ships(self):
-        """The default file in the docs, the mod's default rules, and what the mod tells the session all agree."""
+    def test_the_documented_talk_file_has_the_default_pace(self):
         root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..")
         with open(os.path.join(root, "docs", "usage.md")) as f:
             documented = f.read().split("## How it talks", 1)[1].split("```markdown\n", 1)[1].split("\n```", 1)[0]
-        with open(os.path.join(root, "mod", "walk-voice", "hooks", "register.js")) as f:
-            mod = f.read()
-        told = mod.split("Without them, ", 1)[1].split(". When", 1)[0]
         defaults = {key: value[0] for key, value in PACE.items()}
         self.assertEqual(read_pace(documented), defaults)
         for key, value in defaults.items():
             self.assertIn("%s: %s" % (key, value), documented)
-            self.assertRegex(told, r"\b%s(?: is)? %s\b" % (key, value))
-        rules = documented.split("---\n", 2)[2].strip()
-        self.assertIn("const STYLE_RULES = `%s`" % rules, mod)
 
     def mic(self, samples, seconds):
         for _ in range(int(seconds * 16000 / WINDOW)):

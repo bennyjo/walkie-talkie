@@ -144,7 +144,7 @@ The gateway's own notices, such as "Paused." or "It's in the queue.", always spe
 
 How fast the voice talks, how long it pauses, and how the session words its replies are set in one Markdown file on the Mac, `~/.config/walkie-talkie/talk.md`. It works like an `AGENTS.md` for talking. Without the file, you get the defaults below. Edits take effect without a restart: the pace from the next sentence, and the rules from the next prompt.
 
-The front matter, between two `---` lines, sets the pace. Each setting is optional:
+The front matter, between two `---` lines, sets the pace. Each setting is optional, and goes on its own line as its exact name, a colon, and a plain number, such as `speed: 0.8`:
 
 | Setting | What it sets | Default | Range |
 | --- | --- | --- | --- |
@@ -152,7 +152,7 @@ The front matter, between two `---` lines, sets the pace. Each setting is option
 | `sentence_pause` | Seconds of silence between sentences | 0.4 | 0 to 3 |
 | `paragraph_pause` | Seconds of silence between paragraphs, list items, and lines | 0.9 | 0 to 5 |
 
-A value that's missing or out of range keeps its default, and the gateway logs which setting it ignored. The pause after a reply's last sentence stays short, so you can answer right away. Notices, such as "It's in the queue.", use the speed but not the pauses.
+A setting that's missing, not a plain number, or out of range keeps its default. The gateway logs each setting it ignores, and each line whose name isn't one of these three. The pause after a reply's last sentence stays short, so you can answer right away. Notices, such as "It's in the queue.", use the speed but not the pauses.
 
 The text after the front matter replaces the session's style rules. If there's no text, the session follows these default rules:
 
@@ -175,7 +175,7 @@ Write for the ear:
 
 Some rules always apply, whatever the file says. The rules cover only the reply to the prompt they arrive with. The session leaves out code, commands, file paths, URLs, credentials, and similar text, which the gateway drops anyway. Before anything destructive, it asks you to say one specific word back.
 
-You can also ask by voice. Say something like "talk slower from now on" or "keep your confirmations shorter", and the session edits the file, creating it if it's missing, so the change holds for every later reply and session. Changing a file outside its folder may need your permission at the keyboard, and then you hear "asking for a permission".
+You can also ask by voice. Say something like "talk slower from now on" or "keep your confirmations shorter", and the session edits the file, creating it from the current rules if it's missing, and changes only what you asked, so the change holds for every later reply and session. Changing a file outside its folder may need your permission at the keyboard, and then you hear "asking for a permission".
 
 ## Troubleshooting
 
