@@ -46,7 +46,17 @@ An install only adds. Logins and deny lists from earlier installs stay, and ever
 uv run --project gateway walkie-gateway install --remove-login ~/.claude
 ```
 
-The removed login's own deny list stays in `connect.json`. If you name that login again, the install restores the list and says how many names it restored.
+The removed login's own deny list and name stay in `connect.json`. If you name that login again, the install restores both and says how many deny-list names it restored.
+
+### Name each account
+
+The app groups sessions by login, and you hear the login's name with each session's name. A login goes by its folder's name: `personal` for `~/.claude-personal`, and `default` for `~/.claude`. To give a login the name you know it by, such as the account it signs in to:
+
+```sh
+uv run --project gateway walkie-gateway install --name-login ~/.claude work
+```
+
+A name is up to 40 letters, digits, spaces, dots, dashes, or underscores. It stays across installs until you give the login another one. Sessions pick up a new name when they start, or after `/reload-plugins`.
 
 Each install prints the logins that may connect, how many names each one denies of its own, and how many are denied on every login.
 

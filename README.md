@@ -14,7 +14,7 @@ Then you just talk. "What's everyone working on?" When you stop, your words go t
 
 If you've set up a front desk, you can talk to it while Firstmate is deep in a long turn. It answers from Firstmate's status and files everything else for Firstmate to pick up. When Firstmate wants to merge, it reads the exact action back, and you hear it word for word. You say "yes", take out the phone, and confirm with your fingerprint. A voice alone confirms nothing there.
 
-To talk to another session, such as one on your personal login, choose it in the app, or say "switch session". Either way, you confirm with your fingerprint, as at Start, and you hear the name of the session you're now talking to.
+To talk to another session, such as one on your personal login, choose it in the app, or say "switch session". The app groups sessions by login, and names a Firstmate secondmate by the secondmate it is. Either way, you confirm with your fingerprint, as at Start, and you hear the name of the session you're now talking to.
 
 You never type. Apart from Start, a switch, and a confirmation, the phone stays in your pocket.
 

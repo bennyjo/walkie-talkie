@@ -80,7 +80,7 @@ import numpy as np
 
 from . import security
 from .speech import DEFAULT_VOICE, NOTICE_VOICE, VOICES, Pace
-from .text import LEFT_OUT, SpeechFilter, compact, kind, sanitize_prompt, spoken_words, switch_target, words_of
+from .text import LEFT_OUT, SpeechFilter, kind, sanitize_prompt, spoken_words, switch_target, words_of
 from .turns import SECONDS, TurnDetector, speaking_level
 
 log = logging.getLogger("walkie.conversation")
@@ -756,7 +756,7 @@ class Conversation:
         """
         listed = [s for s in self.modlink.sessions.values() if s.nonce]
         if target:
-            matches = [s for s in listed if compact(s.name) == target]
+            matches = [s for s in listed if s.called(target)]
             if not matches:
                 return False
             matches = [s for s in matches if s is not session]

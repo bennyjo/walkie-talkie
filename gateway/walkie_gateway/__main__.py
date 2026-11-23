@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import shutil
 import signal
 import socket
@@ -22,6 +23,7 @@ from .speech import OpusDecoder, OpusEncoder, Speech, VoiceDetector, default_mod
 DEFAULT_PORT = 8791
 MOD_NAME = "walk-voice"
 MOD_FILES = (".claude-plugin/plugin.json", "hooks/hooks.json")  # and every hooks/*.js
+LOGIN_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ._-]{0,39}")
 UNREADABLE = "Can't read %s: %s. Nothing was changed. Fix the file, or move it away to start over."
 
 
@@ -75,14 +77,15 @@ async def serve(args):
         awake.terminate()
 
 
-def install(logins, deny, deny_on, remove_logins=(), allow=(), allow_on=()):
+def install(logins, deny, deny_on, remove_logins=(), allow=(), allow_on=(), name_login=()):
     """A read-only copy of the mod in each login that may connect, and the list of what may connect.
 
     A copy, not a link: an edit or a branch switch in this checkout must not change what
     every session runs. Read-only, so a stray save doesn't either. The logins and deny lists
     stay in the owner's own file, never in this repository. An install only adds to them:
-    --remove-login takes a login away but keeps its deny list for when it comes back, and
-    only --allow and --allow-on take a denied name away.
+    --remove-login takes a login away but keeps its deny list and name for when it comes back, and
+    only --allow and --allow-on take a denied name away. A login's name, which heads its sessions in
+    the phone's list, stays until --name-login gives it another.
     """
     config_path = security.connect_config_path()
     old = _read_config(config_path)
@@ -106,12 +109,16 @@ def install(logins, deny, deny_on, remove_logins=(), allow=(), allow_on=()):
         if login not in named:
             _login_dir(login, "Name it with --remove-login to stop installing into it.")
     added, taken = _per_login(deny_on, lists, "--deny-on"), _per_login(allow_on, lists, "--allow-on")
+    titles = _login_names({**(old.get("removed") or {}), **(old.get("logins") or {})},
+                          _per_login(name_login, lists, "--name-login"))
     config = {
-        "logins": {login: {"deny": _without(_names(names, added[login]), taken[login], "--allow-on")}
+        "logins": {login: {"deny": _without(_names(names, added[login]), taken[login], "--allow-on"),
+                           **({"name": titles[login]} if titles.get(login) else {})}
                    for login, names in lists.items()},
         "deny": _without(_names(old.get("deny", []), deny), allow, "--allow"),
     }
-    kept = {login: {"deny": names} for login, names in kept.items() if names}
+    kept = {login: {"deny": names, **({"name": titles[login]} if titles.get(login) else {})}
+            for login, names in kept.items() if names or titles.get(login)}
     if kept:
         config["removed"] = kept
     for login in removed:
@@ -127,7 +134,8 @@ def install(logins, deny, deny_on, remove_logins=(), allow=(), allow_on=()):
     security.write_private(config_path, json.dumps(config, indent=2) + "\n")
     print("Sessions on these logins may connect, after a fingerprint on the phone:", flush=True)
     for login, entry in config["logins"].items():
-        print("  %s, with %s of its own denied." % (login, _count(entry["deny"])), flush=True)
+        named = ', named "%s"' % entry["name"] if "name" in entry else ""
+        print("  %s%s, with %s of its own denied." % (login, named, _count(entry["deny"])), flush=True)
     print("Denied on every login: %s." % _count(config["deny"]), flush=True)
     print("Settings saved in %s. Start new sessions, or run /reload-plugins in running ones." % config_path, flush=True)
 
@@ -159,7 +167,22 @@ def _config_problem(config):
         for login, entry in logins.items():
             if not isinstance(entry, dict) or not _name_list(entry.get("deny", [])):
                 return "the deny list for %s isn't a list of names" % login
+            if not isinstance(entry.get("name", ""), str):
+                return "the name for %s isn't text" % login
     return None
+
+
+def _login_names(old, given):
+    """Each login's name: the one given now, or else the one an earlier install gave it."""
+    names = {login: entry["name"] for login, entry in (old or {}).items() if isinstance(entry, dict) and entry.get("name")}
+    for login, new in given.items():
+        if new:
+            name = " ".join(new[-1].split())
+            if not LOGIN_NAME.fullmatch(name):
+                raise SystemExit("A login's name is up to 40 letters, digits, spaces, dots, dashes or underscores, "
+                                 "such as work.")
+            names[login] = name
+    return names
 
 
 def _name_list(names):
@@ -349,6 +372,9 @@ def main(argv=None):
                             "earlier installs, which this one refreshes too")
     setup.add_argument("--remove-login", action="append", default=[], metavar="LOGIN",
                        help="stop that login's sessions from connecting, and remove the mod from it; repeatable")
+    setup.add_argument("--name-login", action="append", default=[], nargs=2, metavar=("LOGIN", "NAME"),
+                       help="what the phone calls that login, such as work, to head its sessions; the default is "
+                            "the folder's name, such as personal for ~/.claude-personal; kept from earlier installs")
     setup.add_argument("--deny", action="append", default=[], metavar="NAME",
                        help="never list or connect a session whose folder path, or whose git remote's owner or "
                             "repository, has this name, on any login; repeatable, and kept from earlier installs")
@@ -363,7 +389,7 @@ def main(argv=None):
         revoke(args.state)
         return 0
     if args.command == "install":
-        install(args.login, args.deny, args.deny_on, args.remove_login, args.allow, args.allow_on)
+        install(args.login, args.deny, args.deny_on, args.remove_login, args.allow, args.allow_on, args.name_login)
         return 0
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s", stream=sys.stderr)
