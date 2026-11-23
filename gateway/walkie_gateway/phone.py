@@ -5,19 +5,26 @@ Each frame is a 4-byte big-endian payload length, a 1-byte type, and the payload
     CONTROL  JSON text
     MIC      4-byte sequence number, then one Opus packet (phone to gateway)
     SPEECH   4-byte sequence number, 2-byte generation, then one Opus packet (gateway to phone)
+    SEALED   another frame's type and payload, encrypted and authenticated
 
 Login, right after connecting:
 
     gateway  {"t": "challenge", "nonce": S}
     phone    {"t": "auth", "nonce": C, "mac": M, "run": R, "down": D, "approve": A}
-    gateway  {"t": "ok", "mac": G, "up": U, "approved": B, "days": N}
+    gateway  {"t": "ok", "mac": G, "up": U, "approved": B, "days": N}       sealed
 
 M and G are HMACs of the two nonces under the shared token, so each side proves
-it holds the token and neither sends it. The phone sends no audio until G checks
-out. R names one run of the phone's service. D is the last SPEECH sequence the
-phone got, and U is the last MIC sequence the gateway got, 0 if none yet, or -1
-if it doesn't know this run. Each side then resends what the other missed. N is
-how many days the pairing has left.
+it holds the token and neither sends it. From the gateway's answer on, every
+frame is SEALED under security.frame_key(token, S, C), with AES-256-GCM and a
+nonce that counts each direction's frames: a frame that was changed, replayed,
+reordered, or sealed for another connection fails to open, and whichever side
+finds one closes the connection. So the login is bound to the connection it ran
+on, and only the two holders of the token can read or add to a call, whatever
+carries it. The phone sends no audio until G checks out. R names one run of the
+phone's service. D is the last SPEECH sequence the phone got, and U is the last
+MIC sequence the gateway got, 0 if none yet, or -1 if it doesn't know this run.
+Each side then resends what the other missed. N is how many days the pairing
+has left.
 
 The token alone gets the list of sessions, and nothing else: no audio goes either
 way, and no session is chosen. A run starts only with a fingerprint on the phone:
@@ -50,7 +57,8 @@ id of a session tapped in the app's list, which the gateway answers with a
 "confirm" for that session's fingerprint, as for a spoken switch.
 
 To pair instead: phone sends {"t": "pair", "code": C, "key": K}, with K its public
-key, and the gateway answers {"t": "paired", "token": T} and closes.
+key, and the gateway answers {"t": "paired", "token": T} and closes. Pairing has no
+token to seal with yet, so it relies on the tailnet, once.
 """
 import asyncio
 import collections
@@ -64,7 +72,7 @@ from . import security
 log = logging.getLogger("walkie.phone")
 
 HEADER = struct.Struct(">IB")
-CONTROL, MIC, SPEECH = 1, 2, 3
+CONTROL, MIC, SPEECH, SEALED = 1, 2, 3, 4
 MIC_HEADER = struct.Struct(">I")
 SPEECH_HEADER = struct.Struct(">IH")
 MAX_FRAME_BEFORE_LOGIN = 2048
@@ -78,7 +86,7 @@ RESUME_FRAMES = 1500    # 30 s of speech
 MIC_GAP_FRAMES = 5      # 100 ms: microphone frames missing beyond this mean words may be missing too
 # A dropped connection, or a frame that isn't what it should be: either way, this connection is over.
 BAD_CONNECTION = (asyncio.TimeoutError, asyncio.IncompleteReadError, ConnectionError, OSError,
-                  ValueError, KeyError, TypeError, AttributeError, struct.error)
+                  ValueError, KeyError, TypeError, AttributeError, struct.error, security.SecurityError)
 
 
 def frame(kind, payload):
@@ -89,11 +97,31 @@ def control(obj):
     return frame(CONTROL, json.dumps(obj, separators=(",", ":")).encode())
 
 
+def sealed(seal, plain):
+    """A plain frame, sealed for the wire: its type and payload are the secret, its length isn't."""
+    body = seal.seal(plain[HEADER.size - 1:])
+    return HEADER.pack(len(body), SEALED) + body
+
+
+def opened(seal, kind, payload):
+    """The type and payload inside a SEALED frame. Anything but a sealed frame that opens is an error."""
+    if kind != SEALED:
+        raise ValueError("expected a sealed frame")
+    plain = seal.open(payload)
+    if not plain:
+        raise ValueError("an empty frame")
+    return plain[0], plain[1:]
+
+
 async def read_frame(reader, limit):
     length, kind = HEADER.unpack(await reader.readexactly(HEADER.size))
     if length > limit:
         raise ValueError("frame too long")
     return kind, await reader.readexactly(length)
+
+
+async def read_sealed(reader, seal, limit):
+    return opened(seal, *await read_frame(reader, limit))
 
 
 class PhoneServer:
@@ -107,6 +135,7 @@ class PhoneServer:
         self.limiter = security.FailureLimiter()
         self.server = None
         self.writer = None
+        self.seal = None            # the connection's encryption, made at its login
         self.waiting_logins = 0
         self.run_id = None
         self.approved_run = None    # the run a fingerprint started, until it ends
@@ -175,7 +204,7 @@ class PhoneServer:
     def send_speech(self, gen, packet):
         self.seq += 1
         data = frame(SPEECH, SPEECH_HEADER.pack(self.seq, gen & 0xffff) + packet)
-        self.sent.append((self.seq, gen, data))
+        self.sent.append((self.seq, gen, data))    # plain: a resend is sealed for the connection it goes on
         self._write(data)
 
     def forget_speech(self):
@@ -190,7 +219,7 @@ class PhoneServer:
             log.info("the phone stopped reading, dropping the connection")
             self.writer.close()
             return
-        self.writer.write(data)
+        self.writer.write(sealed(self.seal, data))
 
     # --- the connection ----------------------------------------------------------
 
@@ -209,7 +238,7 @@ class PhoneServer:
         if result is None:
             writer.close()
             return
-        run, down, grant = result
+        run, down, grant, seal = result
         if self.writer:
             self.writer.close()  # the newest login wins
         fresh = run != self.run_id
@@ -221,14 +250,16 @@ class PhoneServer:
         if grant:
             self.approved_run = run
             self.conversation.phone_approved(grant)
-        self.writer = writer
+        self.writer, self.seal = writer, seal
         log.info("phone connected")
         resend = [] if fresh else [data for seq, _, data in self.sent if seq > down]
         for data in resend:
             self._write(data)
         self.conversation.phone_connected()
         try:
-            await self._read_loop(reader)
+            await self._read_loop(reader, seal)
+        except security.SecurityError as e:
+            log.info("%s: closing the connection", e)
         except BAD_CONNECTION:
             pass
         finally:
@@ -268,10 +299,11 @@ class PhoneServer:
         run, down = hello["run"], int(hello["down"])
         if not isinstance(run, str) or not run:
             raise ValueError("bad run")
+        seal = security.Seal(security.frame_key(token, nonce, client_nonce), security.GATEWAY_TO_PHONE)
         answer = {"t": "ok", "mac": security.gateway_mac(token, nonce, client_nonce)}
         if self.store.expired():
             log.info("the pairing has expired")
-            writer.write(control({**answer, "up": -1, "approved": False, "expired": True}))
+            writer.write(sealed(seal, control({**answer, "up": -1, "approved": False, "expired": True})))
             await writer.drain()
             return None
         grant, refused = None, None
@@ -283,9 +315,9 @@ class PhoneServer:
                        "days": self.store.days_left()})
         if refused:
             answer["refused"] = refused
-        writer.write(control(answer))
+        writer.write(sealed(seal, control(answer)))
         await writer.drain()
-        return run, down, grant
+        return run, down, grant, seal
 
     def _approval(self, approve, run):
         """A fingerprint's signature over the one challenge, for a session that's still there. Used once."""
@@ -326,9 +358,9 @@ class PhoneServer:
         self.pairing = None
         print("Paired with the phone at %s." % peer, flush=True)
 
-    async def _read_loop(self, reader):
+    async def _read_loop(self, reader, seal):
         while True:
-            kind, payload = await asyncio.wait_for(read_frame(reader, MAX_FRAME), IDLE_SECONDS)
+            kind, payload = await asyncio.wait_for(read_sealed(reader, seal, MAX_FRAME), IDLE_SECONDS)
             if kind == MIC:
                 seq = MIC_HEADER.unpack_from(payload)[0]
                 if self.approved and seq > self.up:

@@ -13,11 +13,14 @@ from walkie_gateway.phone import (
     HEADER,
     MIC,
     MIC_HEADER,
+    SEALED,
     SPEECH,
     SPEECH_HEADER,
     PhoneServer,
     control,
     frame,
+    opened,
+    sealed,
 )
 
 from .keys import KEY, PhoneKey
@@ -68,6 +71,7 @@ class Phone:
 
     def __init__(self, port, token="", run="run-1", down=0):
         self.port, self.token, self.run, self.down = port, token, run, down
+        self.key = self.seal = None
 
     async def connect(self):
         self.reader, self.writer = await asyncio.open_connection("127.0.0.1", self.port)
@@ -79,7 +83,8 @@ class Phone:
         self.server_nonce = json.loads(payload)["nonce"]
         return self
 
-    async def login(self, mac=None, approve=None):
+    async def login(self, mac=None, approve=None, token=None):
+        """Logs in, and from the answer on, every frame each way is sealed under this login's key."""
         client_nonce = security.new_nonce()
         auth = {
             "t": "auth", "nonce": client_nonce, "run": self.run, "down": self.down,
@@ -89,17 +94,26 @@ class Phone:
             auth["approve"] = approve
         self.writer.write(control(auth))
         await self.writer.drain()
-        kind, payload = await read_frame(self.reader)
-        self.answer = json.loads(payload)
+        self.key = security.frame_key(token or self.token, self.server_nonce, client_nonce)
+        self.seal = security.Seal(self.key, security.PHONE_TO_GATEWAY)
+        self.answer = json.loads((await self.read())[1])
         self.expected_proof = security.gateway_mac(self.token, self.server_nonce, client_nonce)
         return self.answer
 
+    async def read(self, timeout=2):
+        """The next frame's type and payload, opened: the gateway sends nothing else after a login."""
+        kind, payload = await asyncio.wait_for(read_frame(self.reader), timeout)
+        return opened(self.seal, kind, payload)
+
+    def send(self, plain):
+        self.writer.write(sealed(self.seal, plain))
+
     async def ask_nonce(self):
         """What the app does as Start is tapped, before the fingerprint."""
-        self.writer.write(control({"t": "nonce"}))
+        self.send(control({"t": "nonce"}))
         await self.writer.drain()
         while True:
-            kind, payload = await asyncio.wait_for(read_frame(self.reader), 2)
+            kind, payload = await self.read()
             message = json.loads(payload)
             if message["t"] == "nonce":
                 return message["nonce"]
@@ -109,7 +123,7 @@ class Phone:
         return {"session": session, "modNonce": mod_nonce, "nonce": nonce, "sig": key.sign(message)}
 
     def send_mic(self, seq, packet):
-        self.writer.write(frame(MIC, MIC_HEADER.pack(seq) + packet))
+        self.send(frame(MIC, MIC_HEADER.pack(seq) + packet))
 
     async def closed_by_server(self):
         return await asyncio.wait_for(self.reader.read(1), 2) == b""
@@ -170,7 +184,7 @@ class PhoneServerTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_mic_before_login_is_refused(self):
         phone = await Phone(self.port, self.token).connect()
-        phone.send_mic(1, b"sound")
+        phone.writer.write(frame(MIC, MIC_HEADER.pack(1) + b"sound"))
         await phone.writer.drain()
         self.assertTrue(await phone.closed_by_server())
         self.assertEqual(self.conversation.packets, [])
@@ -257,7 +271,7 @@ class PhoneServerTest(unittest.IsolatedAsyncioTestCase):
     async def test_a_short_mic_frame_ends_the_connection_not_the_server(self):
         phone = Phone(self.port, self.token)
         await self.start(phone)
-        phone.writer.write(frame(MIC, b"\x01"))
+        phone.send(frame(MIC, b"\x01"))
         await phone.writer.drain()
         self.assertTrue(await phone.closed_by_server())
         phone.close()
@@ -268,8 +282,8 @@ class PhoneServerTest(unittest.IsolatedAsyncioTestCase):
     async def test_a_ping_gets_a_pong(self):
         phone = await Phone(self.port, self.token).connect()
         await phone.login()
-        phone.writer.write(control({"t": "ping", "ms": 42}))
-        kind, payload = await asyncio.wait_for(read_frame(phone.reader), 2)
+        phone.send(control({"t": "ping", "ms": 42}))
+        kind, payload = await phone.read()
         self.assertEqual(json.loads(payload), {"t": "pong", "ms": 42})
         phone.close()
 
@@ -282,7 +296,7 @@ class PhoneServerTest(unittest.IsolatedAsyncioTestCase):
         for packet in (b"one", b"two", b"three"):
             self.server.send_speech(7, packet)
         for _ in range(3):
-            kind, payload = await asyncio.wait_for(read_frame(phone.reader), 2)
+            kind, payload = await phone.read()
             self.assertEqual(kind, SPEECH)
         phone.close()
         await asyncio.sleep(0.05)
@@ -292,7 +306,7 @@ class PhoneServerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(answer["up"], 5)
         got = []
         for _ in range(2):
-            kind, payload = await asyncio.wait_for(read_frame(again.reader), 2)
+            kind, payload = await again.read()
             seq, gen = SPEECH_HEADER.unpack_from(payload)
             got.append((seq, gen, payload[SPEECH_HEADER.size:]))
         self.assertEqual(got, [(2, 7, b"two"), (3, 7, b"three")])
@@ -306,15 +320,15 @@ class PhoneServerTest(unittest.IsolatedAsyncioTestCase):
         self.server.send_notice_tone(3)
         self.server.send_speech(3, b"paused")
         for _ in range(3):
-            await asyncio.wait_for(read_frame(phone.reader), 2)
+            await phone.read()
         phone.close()
         await asyncio.sleep(0.05)
 
         again = await Phone(self.port, self.token, down=1).connect()  # got the reply, then the line dropped
         await again.login()
-        kind, payload = await asyncio.wait_for(read_frame(again.reader), 2)
+        kind, payload = await again.read()
         self.assertEqual((kind, json.loads(payload)), (CONTROL, {"t": "notice", "gen": 3}))
-        kind, payload = await asyncio.wait_for(read_frame(again.reader), 2)
+        kind, payload = await again.read()
         self.assertEqual((kind, payload[SPEECH_HEADER.size:]), (SPEECH, b"paused"))
         again.close()
 
@@ -322,14 +336,14 @@ class PhoneServerTest(unittest.IsolatedAsyncioTestCase):
         phone = await Phone(self.port, self.token).connect()
         await phone.login()
         self.server.send_speech(1, b"one")
-        await asyncio.wait_for(read_frame(phone.reader), 2)
+        await phone.read()
         self.server.forget_speech()
         phone.close()
         await asyncio.sleep(0.05)
         again = await Phone(self.port, self.token, down=0).connect()
         await again.login()
         with self.assertRaises(asyncio.TimeoutError):
-            await asyncio.wait_for(read_frame(again.reader), 0.2)
+            await again.read(0.2)
         again.close()
 
     async def test_a_new_run_starts_clean(self):
@@ -353,7 +367,7 @@ class PhoneServerTest(unittest.IsolatedAsyncioTestCase):
         old = await Phone(self.port, self.token, run="run-1").connect()
         await old.login()
         self.server.send_speech(1, b"old reply")
-        await asyncio.wait_for(read_frame(old.reader), 2)
+        await old.read()
         old.close()
         await asyncio.sleep(0.05)
         new = await Phone(self.port, self.token, run="run-2").connect()
@@ -363,7 +377,7 @@ class PhoneServerTest(unittest.IsolatedAsyncioTestCase):
         again = await Phone(self.port, self.token, run="run-2", down=0).connect()
         await again.login()
         with self.assertRaises(asyncio.TimeoutError):
-            await asyncio.wait_for(read_frame(again.reader), 0.2)
+            await again.read(0.2)
         again.close()
 
     async def test_a_known_run_with_no_microphone_yet_is_told_apart_from_an_unknown_one(self):
@@ -389,6 +403,113 @@ class PhoneServerTest(unittest.IsolatedAsyncioTestCase):
         first.close()
         second.close()
 
+    # --- every frame sealed ---------------------------------------------------------
+
+    async def test_the_login_answer_and_everything_after_it_are_sealed(self):
+        phone = await Phone(self.port, self.token).connect()
+        phone.seal = security.Seal(b"\0" * 32, security.PHONE_TO_GATEWAY)  # read the answer raw
+        client_nonce = security.new_nonce()
+        phone.writer.write(control({"t": "auth", "nonce": client_nonce, "run": "walk", "down": 0,
+                                    "mac": security.phone_mac(self.token, phone.server_nonce, client_nonce)}))
+        await phone.writer.drain()
+        kind, payload = await asyncio.wait_for(read_frame(phone.reader), 2)
+        self.assertEqual(kind, SEALED)
+        self.assertNotIn(b'"ok"', payload)
+        key = security.frame_key(self.token, phone.server_nonce, client_nonce)
+        phone.seal = security.Seal(key, security.PHONE_TO_GATEWAY)
+        self.assertEqual(json.loads(opened(phone.seal, kind, payload)[1])["t"], "ok")
+        self.server.send_speech(1, b"reply")
+        kind, payload = await asyncio.wait_for(read_frame(phone.reader), 2)
+        self.assertEqual(kind, SEALED)
+        self.assertNotIn(b"reply", payload)
+        self.assertEqual(opened(phone.seal, kind, payload), (SPEECH, SPEECH_HEADER.pack(1, 1) + b"reply"))
+        phone.close()
+
+    async def test_a_plain_frame_after_login_ends_the_connection(self):
+        phone = Phone(self.port, self.token)
+        await self.start(phone)
+        phone.writer.write(frame(MIC, MIC_HEADER.pack(1) + b"sound"))
+        await phone.writer.drain()
+        self.assertTrue(await phone.closed_by_server())
+        self.assertEqual(self.conversation.packets, [])
+        phone.close()
+
+    async def test_a_changed_frame_ends_the_connection(self):
+        phone = Phone(self.port, self.token)
+        await self.start(phone)
+        data = bytearray(sealed(phone.seal, frame(MIC, MIC_HEADER.pack(1) + b"sound")))
+        data[-1] ^= 1
+        phone.writer.write(bytes(data))
+        await phone.writer.drain()
+        self.assertTrue(await phone.closed_by_server())
+        self.assertEqual(self.conversation.packets, [])
+        phone.close()
+
+    async def test_a_replayed_frame_ends_the_connection(self):
+        phone = Phone(self.port, self.token)
+        await self.start(phone)
+        data = sealed(phone.seal, frame(MIC, MIC_HEADER.pack(1) + b"sound"))
+        phone.writer.write(data)
+        await phone.writer.drain()
+        await asyncio.sleep(0.05)
+        self.assertEqual(self.conversation.packets, [b"sound"])
+        phone.writer.write(data)
+        await phone.writer.drain()
+        self.assertTrue(await phone.closed_by_server())
+        self.assertEqual(self.conversation.packets, [b"sound"])
+        phone.close()
+
+    async def test_frames_out_of_order_end_the_connection(self):
+        phone = Phone(self.port, self.token)
+        await self.start(phone)
+        first = sealed(phone.seal, frame(MIC, MIC_HEADER.pack(1) + b"a"))
+        second = sealed(phone.seal, frame(MIC, MIC_HEADER.pack(2) + b"b"))
+        phone.writer.write(second + first)
+        await phone.writer.drain()
+        self.assertTrue(await phone.closed_by_server())
+        self.assertEqual(self.conversation.packets, [])
+        phone.close()
+
+    async def test_a_frame_under_another_key_ends_the_connection(self):
+        phone = Phone(self.port, self.token)
+        await self.start(phone)
+        other = security.Seal(security.frame_key("ab" * 32, "0" * 32, "1" * 32), security.PHONE_TO_GATEWAY)
+        phone.writer.write(sealed(other, frame(MIC, MIC_HEADER.pack(1) + b"sound")))
+        await phone.writer.drain()
+        self.assertTrue(await phone.closed_by_server())
+        self.assertEqual(self.conversation.packets, [])
+        phone.close()
+
+    async def test_a_frame_from_an_earlier_connection_ends_the_next_one(self):
+        phone = Phone(self.port, self.token, run="walk")
+        await self.start(phone)
+        old = sealed(phone.seal, frame(MIC, MIC_HEADER.pack(1) + b"sound"))
+        phone.close()
+        await asyncio.sleep(0.05)
+        again = await Phone(self.port, self.token, run="walk").connect()
+        await again.login()
+        again.writer.write(old)
+        await again.writer.drain()
+        self.assertTrue(await again.closed_by_server())
+        self.assertEqual(self.conversation.packets, [])
+        again.close()
+
+    async def test_a_frame_sealed_the_other_way_is_refused(self):
+        phone = Phone(self.port, self.token)
+        await self.start(phone)
+        backwards = security.Seal(phone.key, security.GATEWAY_TO_PHONE)
+        phone.writer.write(sealed(backwards, frame(MIC, MIC_HEADER.pack(1) + b"sound")))
+        await phone.writer.drain()
+        self.assertTrue(await phone.closed_by_server())
+        self.assertEqual(self.conversation.packets, [])
+        phone.close()
+
+    async def test_the_wrong_token_cannot_open_the_answer(self):
+        phone = await Phone(self.port, self.token).connect()
+        with self.assertRaises(security.SecurityError):
+            await phone.login(token="cd" * 32)
+        phone.close()
+
 
     # --- a fingerprint at every Start ------------------------------------------------
 
@@ -398,8 +519,8 @@ class PhoneServerTest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(answer["approved"])
         self.assertEqual(answer["days"], security.PAIRING_DAYS)
         phone.send_mic(1, b"sound")
-        phone.writer.write(control({"t": "tap", "gen": 1}))
-        phone.writer.write(control({"t": "release"}))
+        phone.send(control({"t": "tap", "gen": 1}))
+        phone.send(control({"t": "release"}))
         await phone.writer.drain()
         await asyncio.sleep(0.05)
         self.assertEqual(self.conversation.packets, [])
@@ -413,7 +534,7 @@ class PhoneServerTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.server.approved)
         grant = self.conversation.grants[-1]
         self.assertEqual((grant["session"], grant["modNonce"], grant["run"]), ("7", "mod-nonce", "walk"))
-        phone.writer.write(control({"t": "tap", "gen": 1}))
+        phone.send(control({"t": "tap", "gen": 1}))
         await phone.writer.drain()
         await asyncio.sleep(0.05)
         self.assertEqual(self.conversation.messages, [{"t": "tap", "gen": 1}])
@@ -499,9 +620,9 @@ class PhoneServerTest(unittest.IsolatedAsyncioTestCase):
         phone = Phone(self.port, self.token, run="walk")
         await self.start(phone)
         self.server.end_run()
-        phone.writer.write(control({"t": "hold", "id": 4}))
+        phone.send(control({"t": "hold", "id": 4}))
         await phone.writer.drain()
-        kind, payload = await asyncio.wait_for(read_frame(phone.reader), 2)
+        kind, payload = await phone.read()
         self.assertEqual(json.loads(payload), {"t": "resume", "id": 4, "leak": False})
         self.assertEqual(self.conversation.messages, [])
         phone.close()

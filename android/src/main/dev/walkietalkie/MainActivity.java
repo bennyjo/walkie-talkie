@@ -222,7 +222,7 @@ public class MainActivity extends Activity {
     private void startBrowse(Pairing pairing) {
         browseConnected = false;
         browseSessions = null;
-        browse = new GatewayLink(pairing, browseListener);
+        browse = new GatewayLink(this, pairing, browseListener);
         browse.start();
     }
 
@@ -247,7 +247,7 @@ public class MainActivity extends Activity {
             String shown = "";
             try {
                 String key = PhoneKey.create();
-                Pairing.save(this, address, GatewayLink.pair(address, code, key));
+                Pairing.save(this, address, GatewayLink.pair(this, address, code, key));
                 pairingOver = false;
             } catch (PhoneKey.Unavailable e) {
                 shown = e.getMessage();

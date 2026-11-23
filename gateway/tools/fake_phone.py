@@ -37,6 +37,8 @@ from walkie_gateway.phone import (
     SPEECH_HEADER,
     control,
     frame,
+    opened,
+    sealed,
 )
 from walkie_gateway.speech import OpusDecoder, Speech
 
@@ -80,6 +82,7 @@ class FakePhone:
     def __init__(self, host, port, token, key=None, confirm=False):
         self.host, self.port, self.token, self.key, self.confirm = host, port, token, key, confirm
         self.run = secrets.token_hex(16)
+        self.seal = None        # this connection's encryption, as the app's: made at login
         self.nonce = None
         self.nonce_ready = asyncio.Event()
         self.seq = 0
@@ -111,12 +114,21 @@ class FakePhone:
             auth["approve"] = approve
         self.writer.write(control(auth))
         await self.writer.drain()
-        kind, payload = await read_frame(self.reader)
+        key = security.frame_key(self.token, server_nonce, client_nonce)
+        self.seal = security.Seal(key, security.PHONE_TO_GATEWAY)
+        try:
+            kind, payload = await self.read()
+        except security.SecurityError:
+            raise SystemExit("the gateway's answer didn't open: it doesn't hold the token") from None
         answer = json.loads(payload)
         if answer.get("mac") != security.gateway_mac(self.token, server_nonce, client_nonce):
             raise SystemExit("the gateway failed to prove it holds the token")
         self.task = asyncio.ensure_future(self._reader())
         return answer
+
+    async def read(self):
+        """The next frame, opened: after login, everything from the gateway is sealed."""
+        return opened(self.seal, *await read_frame(self.reader))
 
     async def start(self, session):
         """What Start does: a fresh challenge on the list's connection, then a new run that carries the signature."""
@@ -131,7 +143,7 @@ class FakePhone:
 
     async def _reader(self):
         while True:
-            kind, payload = await read_frame(self.reader)
+            kind, payload = await self.read()
             now = time.monotonic()
             if kind == SPEECH:
                 seq, gen = SPEECH_HEADER.unpack_from(payload)
@@ -196,14 +208,14 @@ class FakePhone:
             self.pts += step
             for packet in self.encoder.encode(piece):
                 self.seq += 1
-                self.writer.write(frame(MIC, MIC_HEADER.pack(self.seq) + bytes(packet)))
+                self.writer.write(sealed(self.seal, frame(MIC, MIC_HEADER.pack(self.seq) + bytes(packet))))
             await self.writer.drain()
             wait = started + (i + step) / 16000 - time.monotonic()
             if wait > 0:
                 await asyncio.sleep(wait)
 
     def send(self, obj):
-        self.writer.write(control(obj))
+        self.writer.write(sealed(self.seal, control(obj)))
 
 
 async def pair(host, port, code, key_file):

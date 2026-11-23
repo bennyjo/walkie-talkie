@@ -36,7 +36,7 @@ Three pieces, all in this repository:
 | Mod, `mod/walk-voice/` | Inside each Claude Code session | Lists the session on the phone, checks your fingerprint, sends your words in as your own prompt, and passes the reply to the gateway to be spoken |
 
 ```text
-collar mic --> USB receiver --> phone app --(Tailscale)--> Mac gateway --(Unix socket)--> mod in a Claude Code session
+collar mic --> USB receiver --> phone app --(encrypted, over Tailscale)--> Mac gateway --(Unix socket)--> mod in a Claude Code session
 earbuds <----------------------- phone app <---------------- Mac gateway <---------------- reply
 ```
 
@@ -100,7 +100,8 @@ A live session can do anything you can do at its keyboard, so getting into one s
 **Getting in.** To talk to a session, someone needs all of these at once: a device on your tailnet, at the paired phone's address, holding the paired app's secret token, and your fingerprint on that phone's hardware key, for that session, at that Start.
 
 - **A fingerprint at every Start and every switch.** It unlocks a key in the phone's secure hardware for one signature. The gateway and the session both check it before the session takes a spoken prompt.
-- **Private network only.** The gateway listens only on the Mac's Tailscale address, and accepts only the one paired phone. No port faces the internet.
+- **Private network only.** The gateway listens only on the Mac's Tailscale address, and accepts only the one paired phone. No port faces the internet. The app dials the Mac only through the VPN network, so with Tailscale off on the phone, it sends nothing.
+- **The call is encrypted by the app and the gateway themselves.** Every frame after the login is encrypted and authenticated with a key made for that one connection from the pairing token and both sides' login nonces. Tailscale is a second layer around it, not the only one.
 - **Only the sessions you allow.** The mod connects only on the logins you name, and you can keep folders and repositories off the phone.
 - **Speech stays on your devices.** It's recognized and spoken on your Mac. There's no cloud speech service, crash reporter, or analytics, and nothing you say is logged. Claude Code sends your prompts and replies to Anthropic, as it does when you type.
 - **Calls end.** At Stop, when you say "hang up", the moment the earbuds disconnect, after 30 minutes with nothing said, after 2 minutes without the phone, and after four hours at most. The next call takes a new fingerprint.
@@ -112,7 +113,7 @@ A live session can do anything you can do at its keyboard, so getting into one s
 - **The mic can't tell who's speaking.** It's live, with no wake word. Anyone close enough can become a prompt. Say "pause", or stop the app, when you talk to someone else.
 - **A phone taken during a call** can talk to that one session only while your earbuds stay connected. The call ends at once when they disconnect, including when their battery runs out. A thief who stays within radio range of your earbuds can keep talking until you say "hang up", for up to four hours. It can't start another call or switch sessions.
 - **A spoken yes is not a lock.** Only the fingerprint confirmation at a front desk is, and the session that receives it still acts by reading a note.
-- **Tailscale is the only encryption on the call.** Someone who controls your Tailscale account could sit in the middle of a call you started. Turn on two-factor sign-in and Tailnet Lock.
+- **A compromised Tailscale account** could put a device between the phone and the Mac. It could see that a call is on, and how much is said, and cut it, but it couldn't read a call, add to it, or start one without the token and your fingerprint. Use two-factor sign-in for Tailscale.
 - **Programs running as you on the Mac** can reach the gateway's private folder. They can relabel a session, speak in Claude's voice, or grant themselves a session. Such a program can already type into your terminals.
 
 **If you lose your phone,** remove it in the [Tailscale admin console](https://login.tailscale.com/admin/machines) from any browser. That cuts it off at once, wherever you are. Then run this on the Mac:

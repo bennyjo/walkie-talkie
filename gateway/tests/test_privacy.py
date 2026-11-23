@@ -14,8 +14,9 @@ class ManifestTest(unittest.TestCase):
     def test_the_app_asks_for_only_the_permissions_it_needs(self):
         permissions = {element.get(ANDROID + "name") for element in self.manifest.findall("uses-permission")}
         self.assertEqual(permissions, {"android.permission." + name for name in (
-            "INTERNET", "RECORD_AUDIO", "FOREGROUND_SERVICE", "FOREGROUND_SERVICE_MICROPHONE",
-            "FOREGROUND_SERVICE_MEDIA_PLAYBACK", "POST_NOTIFICATIONS", "WAKE_LOCK", "USE_BIOMETRIC")})
+            "INTERNET", "ACCESS_NETWORK_STATE", "RECORD_AUDIO", "FOREGROUND_SERVICE",
+            "FOREGROUND_SERVICE_MICROPHONE", "FOREGROUND_SERVICE_MEDIA_PLAYBACK", "POST_NOTIFICATIONS",
+            "WAKE_LOCK", "USE_BIOMETRIC")})
 
     def test_nothing_from_the_app_goes_to_a_cloud_backup(self):
         self.assertEqual(self.manifest.find("application").get(ANDROID + "allowBackup"), "false")
