@@ -2,7 +2,10 @@
 import asyncio
 import json
 import os
+import signal
 import stat
+import subprocess
+import sys
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -235,6 +238,28 @@ class RevokeTest(unittest.IsolatedAsyncioTestCase):
             await link.stop()
         self.assertTrue(conversation.revoked)
         self.assertIn("The running gateway closed its connection", out)
+        self.assertFalse(security.PhoneStore(self.folder.name).paired)
+
+    async def test_a_stuck_gateway_is_named_and_stopped_not_called_absent(self):
+        # A gateway whose loop is busy takes the connection and says nothing, and it can't act on SIGTERM either.
+        # revoke once said no gateway was running there, while one was, in a call.
+        path = os.path.join(self.folder.name, "mod.sock")
+        stuck = subprocess.Popen([sys.executable, "-c", (
+            "import signal, socket, sys, time\n"
+            "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+            "s = socket.socket(socket.AF_UNIX); s.bind(sys.argv[1]); s.listen(); print('ready', flush=True)\n"
+            "held = s.accept()\n"
+            "time.sleep(60)\n"), path], stdout=subprocess.PIPE, text=True)
+        reaped = asyncio.ensure_future(asyncio.to_thread(stuck.wait))
+        self.addCleanup(stuck.stdout.close)
+        self.addCleanup(stuck.kill)
+        self.assertEqual(stuck.stdout.readline().strip(), "ready")
+        with mock.patch.object(commands, "ANSWER_SECONDS", 0.5), mock.patch.object(commands, "STOP_SECONDS", 0.5):
+            code, out = await asyncio.to_thread(run, "revoke", "--state", self.folder.name)
+        self.assertEqual(code, 0)
+        self.assertIn("A gateway is running there, as process %d, and it didn't answer, so revoke stopped it." % stuck.pid, out)
+        self.assertNotIn("No gateway answered", out)
+        self.assertEqual(await asyncio.wait_for(reaped, 5), -signal.SIGKILL)
         self.assertFalse(security.PhoneStore(self.folder.name).paired)
 
 

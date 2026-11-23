@@ -5,6 +5,7 @@ import unittest
 
 from walkie_gateway.text import (
     MAX_CHARS,
+    MAX_LINE,
     NOTHING_SPEAKABLE,
     ON_SCREEN,
     TRUNCATED,
@@ -128,6 +129,53 @@ class SpeechFilterTest(unittest.TestCase):
         code = "import sys\nfrom walkie_gateway.text import clean_line\nfor line in sys.argv[1:]: clean_line(line)"
         subprocess.run([sys.executable, "-c", code, *lines], check=True, timeout=5,
                        cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+    def test_a_hostile_line_never_stalls_the_gateway(self):
+        # One line like these once held the gateway's event loop, and with it the tap, Stop, and revoke:
+        # 1,200 backticks for 11 seconds, and 6,000 for hours. Each case has a fraction of a second.
+        # In a process of its own, because a pattern that backtracks can't be interrupted from inside.
+        code = """if 1:
+            import sys, time
+            from walkie_gateway import text
+            hostile = ["`" * 6000, "Note " + "`" * 1200 + " end", "``a`" * 12000, "*a " * 16000, "* a*" * 12000,
+                       "(" + " " * 49000, "( ;" + " " * 49000, "a. B`" * 10000, "`" + "a. B" * 12000,
+                       "word " * 10000, "**a " * 12000]
+            for line in hostile:
+                for run in (text.clean_line, text._without_inline_code, text._without_italics,
+                            lambda s: text.EMPTY_BRACKETS.sub("", s)):
+                    start = time.perf_counter()
+                    run(line[:text.MAX_INPUT])
+                    assert time.perf_counter() - start < 0.5, (run, line[:20])
+                for piece in (7, 500, len(line)):
+                    speech = text.SpeechFilter()
+                    start = time.perf_counter()
+                    for at in range(0, len(line), piece):
+                        speech.feed(line[at:at + piece])
+                    speech.finish()
+                    assert time.perf_counter() - start < 1.0, (piece, line[:20])
+        """
+        subprocess.run([sys.executable, "-c", code], check=True, timeout=60,
+                       cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+    def test_a_line_too_long_for_prose_is_something_on_screen(self):
+        text = "Start.\n" + "word " * 500 + "\nEnd."
+        for piece in (7, 600, len(text)):
+            self.assertEqual(spoken(text, piece), ["Start.", ON_SCREEN, "End."])
+        self.assertEqual(clean_line("x" * (MAX_LINE + 1)), "something on screen")
+
+    def test_a_long_paragraph_reads_the_same_however_it_arrives(self):
+        text = "This sentence goes on for a while. " * 120 + "\nNext."
+        self.assertEqual(spoken(text, len(text)), spoken(text))
+
+    def test_inline_code_closes_at_a_run_of_its_own_length(self):
+        self.assertEqual(clean_line("Use ``a`b`` here."), "Use something on screen here.")
+        self.assertEqual(clean_line("A lone ` stays."), "A lone ` stays.")
+        self.assertEqual(clean_line("Run `a` and ``b`` now."), "Run something on screen and something on screen now.")
+
+    def test_italics_keep_their_words(self):
+        self.assertEqual(clean_line("This is *really* it, *twice*."), "This is really it, twice.")
+        self.assertEqual(clean_line("Two * three * four."), "Two * three * four.")
+        self.assertEqual(clean_line("See (, ) and ( ) gone."), "See and gone.")
 
     def test_formatting_tags_with_attributes_still_read_cleanly(self):
         self.assertEqual(clean_line("""Use <a href="x y" class='z' id=w>this</a> one."""), "Use this one.")

@@ -29,7 +29,7 @@ from walkie_gateway.conversation import (
     Conversation,
 )
 from walkie_gateway.modlink import Session
-from walkie_gateway.speech import DEFAULT_VOICE, VOICES
+from walkie_gateway.speech import DEFAULT_VOICE, NOTICE_VOICE, VOICES
 from walkie_gateway.turns import SECONDS, WINDOW
 
 SPOKEN_SECONDS = 0.1
@@ -778,7 +778,7 @@ class ConversationTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(self.conversation.confirming)
 
     async def not_switched(self):
-        await self.settle()
+        await self.by_then(lambda: self.phone.said()[-1:] == [module.NOT_SWITCHED % "firstmate"])
         self.assertEqual(self.conversation.chosen, "7")
         self.assertEqual(len(self.link.sessions["8"].orders), 0)
         self.assertEqual(self.phone.said()[-1], module.NOT_SWITCHED % "firstmate")
@@ -1321,7 +1321,7 @@ class ConversationTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_the_reply_coming_back_through_the_mic_is_never_a_prompt(self):
         self.choose()
-        self.conversation.say("the tests pass on the main branch today")
+        self.conversation.say("the tests pass on the main branch today", None, DEFAULT_VOICE)
         await self.settle(0.05)
         self.conversation.speech.transcribe = lambda audio: "The tests pass on the main branch."
         self.event(kind="turn-start", turnId="t")
@@ -1945,6 +1945,95 @@ class ConversationTest(unittest.IsolatedAsyncioTestCase):
             with open(path, "w") as f:
                 f.write("nobody")
             self.assertEqual(make().voice, DEFAULT_VOICE)
+
+    # --- the gateway's own notices -------------------------------------------------
+
+    def sound_log(self):
+        """The notice tones and speech the phone gets, in the order it gets them."""
+        sent = []
+        send_control, send_speech = self.phone.send_control, self.phone.send_speech
+        self.phone.send_control = lambda message: (sent.append(("tone",) if message["t"] == "notice" else ("control",)),
+                                                   send_control(message))
+        self.phone.send_speech = lambda gen, packet: (sent.append(("speech", packet.decode().rsplit(":", 1)[0])),
+                                                      send_speech(gen, packet))
+        return sent
+
+    def earbuds(self, sent):
+        """What the earbuds play, with "tone" for the phone's notice tone."""
+        out = []
+        for item in sent:
+            word = "tone" if item[0] == "tone" else item[1] if item[0] == "speech" else None
+            if word and (word == "tone" or not out or out[-1] != word):
+                out.append(word)
+        return out
+
+    async def test_a_notice_has_its_own_voice_and_a_tone_that_a_reply_cannot_make(self):
+        # A session steered by what it read ended its reply with "Paused.", and it sounded exactly like the gateway.
+        sent = self.sound_log()
+        self.conversation.phone_message({"t": "voice", "id": "bf_emma"})
+        self.choose()
+        self.event(kind="turn-start", turnId="t")
+        self.event(kind="text", turnId="t", text="Done for now.\nPaused.\n")
+        self.event(kind="turn-end", turnId="t", reason="answer")
+        await self.past_the_gap()
+        self.finish_turn("Pause.")
+        await self.by_then(lambda: "Paused." in self.earbuds(sent)[2:])
+        self.assertEqual(self.earbuds(sent), ["Done for now.", "Paused.", "tone", "Paused."])
+        self.assertEqual(self.conversation.speech.voices, ["bf_emma", "bf_emma", NOTICE_VOICE])
+
+    async def test_every_notice_gets_the_tone_just_before_it(self):
+        sent = self.sound_log()
+        self.choose()
+        self.conversation.say(CANCELLED)
+        self.conversation.say(NOTHING_TO_TYPE)
+        await self.by_then(lambda: NOTHING_TO_TYPE in self.earbuds(sent))
+        self.assertEqual(self.earbuds(sent), ["tone", CANCELLED, "tone", NOTHING_TO_TYPE])
+        self.assertTrue(all(c["gen"] == self.conversation.gen for c in self.phone.controls if c["t"] == "notice"))
+
+    async def test_a_cut_notice_takes_its_tone_with_it(self):
+        sent = self.sound_log()
+        self.phone.connected = False  # so the notice waits, made, with its tone in front
+        self.conversation.say(CANCELLED)
+        await self.by_then(lambda: self.conversation.frames)
+        self.assertIs(self.conversation.frames[0][0], module.NOTICE_TONE)
+        self.conversation._cut_notices()
+        self.phone.connected = True
+        await self.settle()
+        self.assertEqual(self.earbuds(sent), [])
+
+    async def test_a_reply_that_says_a_notice_is_not_logged_as_one(self):
+        self.choose()
+        with self.assertLogs("walkie.conversation", "INFO") as logs:
+            self.event(kind="turn-start", turnId="t")
+            self.event(kind="text", turnId="t", text="Paused.\nIt's in the queue.\n")
+            self.event(kind="turn-end", turnId="t", reason="answer")
+            self.conversation._set_paused(True)
+        self.assertEqual([line for line in logs.output if "notice" in line], ["INFO:walkie.conversation:notice paused"])
+
+    async def test_a_reply_cannot_choose_the_notice_voice(self):
+        self.assertNotIn(NOTICE_VOICE, [name for name, _ in VOICES])
+        self.conversation.phone_message({"t": "voice", "id": NOTICE_VOICE})
+        self.assertEqual(self.conversation.voice, DEFAULT_VOICE)
+        with tempfile.TemporaryDirectory() as folder:
+            path = os.path.join(folder, "voice")
+            with open(path, "w") as f:
+                f.write(NOTICE_VOICE)  # chosen before it became the notices' voice
+            self.assertEqual(Conversation(FakeSpeech(), bool, FakeDecoder, FakeEncoder(), voice_file=path).voice, DEFAULT_VOICE)
+
+    async def test_a_hostile_reply_leaves_the_tap_waiting_for_no_time(self):
+        # A reply line of 1,200 backticks once held the event loop for 11 seconds, so a tap, Stop, and revoke waited.
+        self.choose()
+        self.event(kind="turn-start", turnId="t")
+        for line in ("Note " + "`" * 6000, "*a " * 4000, "(" + " " * 20000):  # 50,000 characters in all are read
+            start = asyncio.get_running_loop().time()
+            for at in range(0, len(line), 4000):
+                self.event(kind="text", turnId="t", text=line[at:at + 4000])
+            self.event(kind="text", turnId="t", text="\n")
+            self.assertLess(asyncio.get_running_loop().time() - start, 0.5)
+        self.event(kind="text", turnId="t", text="Still here.\n")
+        self.event(kind="turn-end", turnId="t", reason="answer")
+        await self.by_then(lambda: "Still here." in self.phone.said())
+        self.assertEqual(self.phone.said(), ["Something on screen.", "Still here."])
 
     def mic(self, samples, seconds):
         for _ in range(int(seconds * 16000 / WINDOW)):
@@ -2655,6 +2744,7 @@ class ConversationTest(unittest.IsolatedAsyncioTestCase):
         self.event(kind="order", id=first, drop="stopped", later=1)
         self.event(kind="order", id=second, dropped=True)
         await self.settle(0.5)
+        await self.by_then(lambda: module.LATER_DROPPED in self.phone.said())
         self.assertEqual(self.phone.said(), [module.QUEUED, STOPPED_AT_KEYBOARD, module.LATER_DROPPED])
         self.finish_turn("Type it.")
         self.assertEqual(self.order()["type"], "One.")

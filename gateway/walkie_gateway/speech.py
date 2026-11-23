@@ -20,7 +20,7 @@ RESET_AFTER_WINDOWS = 16  # about half a second with no voice: Silero starts afr
 SILENT = 0.01           # samples quieter than this at either end of a sentence are trimmed
 TAIL_SECONDS = 0.12     # the pause kept after a sentence
 # The pinned Kokoro model's speakers. A voice's place here is its speaker ID in that model.
-VOICES = (
+SPEAKERS = (
     ("af", "Bella and Sarah, American"),
     ("af_bella", "Bella, American"),
     ("af_nicole", "Nicole, American"),
@@ -33,6 +33,10 @@ VOICES = (
     ("bm_george", "George, British"),
     ("bm_lewis", "Lewis, British"),
 )
+# The gateway's own notices, such as "Paused.", speak in this voice only. A reply can't choose it, so a reply
+# that says those words never sounds like the gateway.
+NOTICE_VOICE = "am_michael"
+VOICES = tuple(speaker for speaker in SPEAKERS if speaker[0] != NOTICE_VOICE)  # what a reply can speak in
 DEFAULT_VOICE = VOICES[0][0]
 
 
@@ -92,7 +96,7 @@ class Speech:
 
     def synthesize(self, text, voice=DEFAULT_VOICE):
         """int16 samples at VOICE_RATE."""
-        sid = next(i for i, (name, _) in enumerate(VOICES) if name == voice)
+        sid = next(i for i, (name, _) in enumerate(SPEAKERS) if name == voice)
         audio = self.tts.generate(text, sid=sid, speed=1.0)
         samples = trim_silence(np.asarray(audio.samples, dtype=np.float32))
         return (np.clip(samples, -1.0, 1.0) * 32767).astype(np.int16)

@@ -404,6 +404,9 @@ public class TalkService extends Service implements GatewayLink.Listener, Speake
             case "tone":
                 speaker.warnTone();
                 break;
+            case "notice":
+                speaker.noticeTone(message.optInt("gen"));
+                break;
             case "resume":
                 speaker.resume(message.optInt("id"));
                 if (message.optBoolean("leak")) mic.wasLeak();

@@ -8,8 +8,10 @@ import shutil
 import signal
 import socket
 import stat
+import struct
 import subprocess
 import sys
+import time
 
 from . import security
 from .conversation import Conversation
@@ -244,34 +246,89 @@ def _remove(path):
 
 
 def revoke(state):
-    """The phone stops being trusted at once, whether or not the gateway is running."""
-    told = _post(os.path.join(state, "mod.sock"), "/revoke")
+    """The phone stops being trusted at once, whether or not the gateway is running.
+
+    A gateway that takes the connection and doesn't answer is there but stuck, so it's stopped by its process number.
+    """
+    answered, pid = _post(os.path.join(state, "mod.sock"), "/revoke")
     for name in (security.PHONE_FILE, security.PHONE_KEY_FILE):
         try:
             os.unlink(os.path.join(state, name))
         except FileNotFoundError:
             pass
-    if told:
+    if answered:
         print("Revoked the phone. The running gateway closed its connection and forgot it.", flush=True)
-    else:
+    elif answered is None:
         print("Revoked the phone in %s. No gateway answered there, so a gateway using that folder refuses the phone"
               " when it next starts. If a gateway is running with another --state, run revoke with that --state too."
               % state, flush=True)
+    elif pid and _stop(pid):
+        print("Revoked the phone in %s. A gateway is running there, as process %d, and it didn't answer, so revoke"
+              " stopped it. That ended any call. When you start it again, it refuses the phone." % (state, pid), flush=True)
+    else:
+        print("Revoked the phone in %s. A gateway is running there%s, and it didn't answer. It still has the phone's"
+              " connection. Stop it now%s." % (state, " as process %d" % pid if pid else "",
+                                               ": kill -9 %d" % pid if pid else ", with Ctrl-C where it runs"), flush=True)
     print("To use a phone again, pair it: walkie-gateway serve --pair", flush=True)
 
 
+ANSWER_SECONDS = 5      # a running gateway answers at once
+STOP_SECONDS = 3        # how long a stuck gateway gets to stop before it's killed
+LOCAL_PEERPID = 2       # macOS: getsockopt(SOL_LOCAL, LOCAL_PEERPID) on a Unix socket
+
+
 def _post(path, route):
-    """True if a running gateway answered."""
+    """Whether a gateway answered: True, False if one took the connection and said nothing, or None if none is there.
+
+    Also the process number of whoever took the connection, or None.
+    """
     probe = socket.socket(socket.AF_UNIX)
-    probe.settimeout(5)
+    probe.settimeout(ANSWER_SECONDS)
     try:
         probe.connect(path)
-        probe.sendall(("POST %s HTTP/1.1\r\nHost: walkie\r\nContent-Length: 2\r\n\r\n{}" % route).encode())
-        return probe.recv(64).startswith(b"HTTP/1.1 200")
     except OSError:
-        return False
+        probe.close()
+        return None, None
+    pid = _peer_pid(probe)
+    try:
+        probe.sendall(("POST %s HTTP/1.1\r\nHost: walkie\r\nContent-Length: 2\r\n\r\n{}" % route).encode())
+        return probe.recv(64).startswith(b"HTTP/1.1 200"), pid
+    except OSError:
+        return False, pid
     finally:
         probe.close()
+
+
+def _peer_pid(sock):
+    try:
+        if sys.platform == "darwin":
+            return sock.getsockopt(0, LOCAL_PEERPID) or None
+        if hasattr(socket, "SO_PEERCRED"):
+            return struct.unpack("3i", sock.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))[0] or None
+    except OSError:
+        pass
+    return None
+
+
+def _stop(pid):
+    """Asks the process to stop, then kills it: a stuck gateway can't act on the ask. True once it has gone."""
+    if pid == os.getpid():
+        return False
+    try:
+        os.kill(pid, signal.SIGTERM)
+        deadline = time.monotonic() + STOP_SECONDS
+        while time.monotonic() < deadline:
+            time.sleep(0.1)
+            os.kill(pid, 0)
+        os.kill(pid, signal.SIGKILL)
+        for _ in range(20):
+            time.sleep(0.1)
+            os.kill(pid, 0)
+    except ProcessLookupError:
+        return True
+    except PermissionError:
+        return False
+    return False
 
 
 def main(argv=None):
