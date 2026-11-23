@@ -16,6 +16,7 @@ import android.os.CancellationSignal;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
+import android.security.keystore.KeyExpiredException;
 import android.security.keystore.KeyPermanentlyInvalidatedException;
 import android.text.InputType;
 import android.text.SpannableStringBuilder;
@@ -432,8 +433,9 @@ public class MainActivity extends Activity {
             signer = PhoneKey.signer();
         } catch (GeneralSecurityException | IOException e) {
             Log.e(TAG, "the key won't sign", e);
-            message = e instanceof KeyPermanentlyInvalidatedException
-                    ? "This phone's key has gone, because a fingerprint changed or the pairing ran out. Tap Pair again."
+            message = e instanceof KeyPermanentlyInvalidatedException || e instanceof KeyExpiredException
+                    ? "This phone's key has gone, because a fingerprint changed or the pairing ran out. Tap Pair again. "
+                            + describe(e)
                     : "The key won't sign: " + describe(e);
             if (cancelled != null) cancelled.run();
             render();
