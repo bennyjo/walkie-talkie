@@ -103,14 +103,14 @@ A live session can do anything you can do at its keyboard, so getting into one s
 - **Private network only.** The gateway listens only on the Mac's Tailscale address, and accepts only the one paired phone. No port faces the internet.
 - **Only the sessions you allow.** The mod connects only on the logins you name, and you can keep folders and repositories off the phone.
 - **Speech stays on your devices.** It's recognized and spoken on your Mac. There's no cloud speech service, crash reporter, or analytics, and nothing you say is logged. Claude Code sends your prompts and replies to Anthropic, as it does when you type.
-- **Calls end.** At Stop, after 30 minutes with nothing said, after 2 minutes without the phone, and after four hours at most. The next call takes a new fingerprint.
+- **Calls end.** At Stop, when you say "hang up", the moment the earbuds disconnect, after 30 minutes with nothing said, after 2 minutes without the phone, and after four hours at most. The next call takes a new fingerprint.
 - **The gateway's own words sound different.** Notices such as "Paused." play after a short tone that only the phone makes, in a voice no reply can use. A reply that says "Paused." still sounds like the session.
 
 **Once you're in.** These are the limits. Read them before you rely on this.
 
 - **Your voice has your keyboard's authority.** A spoken prompt does whatever a typed one would in that session, tools included. In a session that runs without permission prompts, that's everything. Connect the sessions you'd hand a keyboard to.
 - **The mic can't tell who's speaking.** It's live, with no wake word. Anyone close enough can become a prompt. Say "pause", or stop the app, when you talk to someone else.
-- **A phone taken during a call** can talk to that one session until the call ends, which can be four hours. It can't start another call or switch sessions.
+- **A phone taken during a call** can talk to that one session only while your earbuds stay connected. The call ends at once when they disconnect, including when their battery runs out. A thief who stays within radio range of your earbuds can keep talking until you say "hang up", for up to four hours. It can't start another call or switch sessions.
 - **A spoken yes is not a lock.** Only the fingerprint confirmation at a front desk is, and the session that receives it still acts by reading a note.
 - **Tailscale is the only encryption on the call.** Someone who controls your Tailscale account could sit in the middle of a call you started. Turn on two-factor sign-in and Tailnet Lock.
 - **Programs running as you on the Mac** can reach the gateway's private folder. They can relabel a session, speak in Claude's voice, or grant themselves a session. Such a program can already type into your terminals.

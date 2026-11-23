@@ -132,6 +132,7 @@ SESSION_GONE = Notice("session-gone", "That session has gone. Choose another in 
 CONNECTED = "Connected to %s."  # never logged: it holds a folder's name
 SESSION_CLOSED = Notice("session-closed", "That session ended the call. Tap Start in the app to connect again.")
 IDLE_ENDED = Notice("idle-ended", "Nothing was said for 30 minutes, so I ended the call.")
+HUNG_UP = Notice("hung-up", "Hanging up.")
 CANCELLED = Notice("cancelled", "Cancelled.")
 DESK_CANCELLED = Notice("desk-cancelled", "Stopped what was waiting. Anything already filed still stands.")
 NOT_SENT = Notice("not-sent", "I couldn't send that to the session.")
@@ -179,7 +180,7 @@ LISTENING = Notice("listening", "Listening.")
 STILL_PAUSED = Notice("still-paused", "Still paused. Say go to start listening.")
 # These go ahead of a reply, because a whole reply can be waiting, and the owner is waiting to know.
 # Only the latest is true, so it replaces any that hasn't gone out, and the last one heard is the current state.
-STATE_NOTICES = {PAUSED, LISTENING, STILL_PAUSED}
+STATE_NOTICES = {PAUSED, LISTENING, STILL_PAUSED, HUNG_UP}
 
 
 class Relayed:
@@ -628,6 +629,10 @@ class Conversation:
         what = kind(text)
         if self.hold:  # it ended without ever counting as the owner
             self._release_hold()
+            return
+        if what == "hang-up":  # paused or not, and with or without a session: the call ends, and a new one needs the fingerprint
+            log.info("hang up, so the run ended")
+            self._end_run("hangup", HUNG_UP)
             return
         if self.paused:
             if what == "resume":

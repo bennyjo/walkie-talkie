@@ -108,6 +108,15 @@ public class TalkService extends Service implements GatewayLink.Listener, Speake
             applyRoutes();
         }
         @Override public void onAudioDevicesRemoved(AudioDeviceInfo[] devices) {
+            // Lost earbuds end the call at once, with no wait. A phone taken from the wearer mid-call must not
+            // keep working, and a new call needs the fingerprint. Never in the emulator's build, which has no earbuds.
+            int[] types = new int[devices.length];
+            for (int i = 0; i < devices.length; i++) types[i] = devices[i].getType();
+            if (started && !Variant.anyRoute(TalkService.this) && EarbudRoutes.anyEarbuds(types)) {
+                Log.i(TAG, "the earbuds are gone, so the call ends");
+                hangUp("The earbuds disconnected, so the call ended. Tap Start to connect again");
+                return;
+            }
             applyRoutes();
         }
     };
@@ -253,7 +262,7 @@ public class TalkService extends Service implements GatewayLink.Listener, Speake
     }
 
     private AudioDeviceInfo earbuds() {
-        return find(AudioManager.GET_DEVICES_OUTPUTS, AudioDeviceInfo.TYPE_BLUETOOTH_A2DP, AudioDeviceInfo.TYPE_BLE_HEADSET);
+        return find(AudioManager.GET_DEVICES_OUTPUTS, EarbudRoutes.TYPES);
     }
 
     private AudioDeviceInfo find(int direction, int... types) {
@@ -473,6 +482,13 @@ public class TalkService extends Service implements GatewayLink.Listener, Speake
             default:
                 return "The call ended. Tap Start to connect again";
         }
+    }
+
+    /** The call ends now: no tone, because the earbuds are the only place one could be heard. onDestroy releases the run. */
+    private void hangUp(String why) {
+        if (!started) return;
+        status.why = why;
+        stopSelf();
     }
 
     /** The run is over. The tone tells a phone in a pocket, and the screen says why. */

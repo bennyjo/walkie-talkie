@@ -18,7 +18,16 @@ public final class TalkGateTest {
         oneFalseAlarmCannotDeafenTheGate();
         aClickDoesNotTrip();
         rumbleDoesNotTrip();
+        losingTheEarbudsIsDetectedAndNothingElseIs();
         System.out.println("TalkGateTest: " + checks + " checks passed");
+    }
+
+    private static void losingTheEarbudsIsDetectedAndNothingElseIs() {
+        check(EarbudRoutes.anyEarbuds(new int[] {8}), "losing a Bluetooth A2DP output ends the call");
+        check(EarbudRoutes.anyEarbuds(new int[] {26}), "losing a BLE headset output ends the call");
+        check(EarbudRoutes.anyEarbuds(new int[] {2, 8}), "the earbuds among other removed devices still end it");
+        check(!EarbudRoutes.anyEarbuds(new int[] {}), "nothing removed ends nothing");
+        check(!EarbudRoutes.anyEarbuds(new int[] {2, 11, 22}), "the phone's speaker or a USB mic going doesn't end the call");
     }
 
     private static void floorSettlesAndAVoiceOverAReplyTrips() {
