@@ -195,7 +195,7 @@ You can also ask by voice. Say something like "talk slower from now on" or "keep
 | The fingerprint prompt says the key has gone | A fingerprint was added to the phone, or the pairing is over 30 days old. Tap **Pair again** |
 | The app says "The key won't sign" or "The fingerprint didn't unlock the key", then an error | The phone's key store refused the key. The error after the message names the exception and its causes. The full trace is in `adb logcat -s walkie` |
 | The app says "That session changed a moment ago" | Its list was a moment out of date. Tap **Start** again |
-| "Which session?" names the same session twice | Two sessions have the same name on one login, such as two copies of one repository, or on logins that both go unnamed because their paths hold a denied name. Switch with **switch session** if they're the only two, or choose the session in the app by where the folder is |
+| "Which session?" names the same session twice | Two sessions have the same name on one login, such as two copies of one repository, or on logins that both go unnamed because their paths or names hold a denied name. Switch with **switch session** if they're the only two, or choose the session in the app by where the folder is |
 | **front-desk** isn't in the app's list | The launcher isn't running, it ran in a stripped environment, such as `env -i`, where Claude Code doesn't load mods, or its `CLAUDE_CONFIG_DIR` isn't a login you installed for. Start it from your usual shell |
 | `A front desk is already running` | Another launcher holds this state folder. Stop that one first |
 | "Connect your USB mic" | The input route isn't USB. With Advanced Protection on, connect the mic before you lock the phone |
