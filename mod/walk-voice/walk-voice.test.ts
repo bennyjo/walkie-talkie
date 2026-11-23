@@ -419,13 +419,14 @@ test('without a talk file, the session gets the documented default rules and pac
 test('a request to talk differently keeps the rest of the style rules', async ($, on) => {
   const rules = await rulesWith(on, $, null)
   expect(rules).toContain('start from the style rules you were given above and change only what they asked')
+  expect(rules).toContain('a plain number, such as speed: 0.8, with no unit or comment')
 })
 
 test('the talk file replaces the style rules, but not the one-reply framing or what is never read out', async ($, on) => {
-  const rules = await rulesWith(on, $, '---\nspeed: 0.8\n---\n\nTalk like a friend on a walk. Two sentences at most.\n')
+  const rules = await rulesWith(on, $, '---\nspeed: 0.7\n---\n\nTalk like a friend on a walk. Two sentences at most.\n')
   expect(rules).toContain('Talk like a friend on a walk. Two sentences at most.')
   expect(rules).not.toContain('Start with the verdict')
-  expect(rules).not.toContain('speed: 0.8')
+  expect(rules).not.toContain('speed: 0.7')
   expect(rules.startsWith('Apply these rules to your reply to the prompt next to this note, and to no later reply.')).toBe(true)
   expect(rules).toContain('No code, commands, file paths, URLs, diffs, logs, tables, credentials')
   expect(rules).toContain("Don't ask for a bare yes")
