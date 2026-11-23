@@ -26,6 +26,7 @@ import android.text.style.RelativeSizeSpan;
 import android.util.Log;
 import android.util.TypedValue;
 import android.view.View;
+import android.view.inputmethod.InputMethodManager;
 import android.window.OnBackInvokedCallback;
 import android.window.OnBackInvokedDispatcher;
 import android.view.WindowManager;
@@ -297,6 +298,11 @@ public class MainActivity extends Activity {
     }
 
     private void closePair() {
+        View focused = getCurrentFocus();
+        if (focused != null) {
+            getSystemService(InputMethodManager.class).hideSoftInputFromWindow(focused.getWindowToken(), 0);
+            focused.clearFocus();
+        }
         addressField.setText("");
         codeField.setText("");
         pairMessage.setText("");
