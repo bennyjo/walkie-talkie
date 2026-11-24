@@ -719,7 +719,7 @@ class ConversationTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(self.conversation.chosen_run(work))
         self.assertEqual(self.conversation.chosen_run(personal), "run-1")
         await self.settle()
-        self.assertEqual(self.phone.said()[-1], "Connected to firstmate on the personal account.")
+        self.assertEqual(self.phone.said()[-1], "You're talking to firstmate on the personal account.")
 
     async def test_prompts_after_a_switch_go_to_the_new_session(self):
         work, personal = self.two_logins()
@@ -919,7 +919,7 @@ class ConversationTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(self.conversation.chosen_run(work))
         self.assertEqual(self.phone.controls[-1]["chosen"], "8")  # the app's list shows where the call is
         await self.settle()
-        self.assertEqual(self.phone.said(), ["Connected to firstmate on the personal account."])
+        self.assertEqual(self.phone.said(), ["You're talking to firstmate on the personal account."])
 
     async def test_declining_a_tapped_switch_switches_nothing(self):
         self.two_logins()
@@ -959,7 +959,7 @@ class ConversationTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.conversation.chosen, "7")
         self.assertEqual(self.order(), {"grant": grant})
         await self.settle()
-        self.assertEqual(self.phone.said(), ["Connected to project."])
+        self.assertEqual(self.phone.said(), ["You're talking to project."])
 
     async def test_only_the_chosen_session_hears_the_run_the_fingerprint_approved_and_only_until_it_ends(self):
         # The mod keeps its grant only while answers name this run, so a listener that never asked the gateway can't ride it.

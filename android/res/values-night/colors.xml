@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <color name="bg">#FF1D1C1A</color>
+  <color name="surface">#FF272623</color>
+  <color name="surface_muted">#FF32302C</color>
+  <color name="outline">#FF3A3834</color>
+  <color name="text">#FFF2F0EA</color>
+  <color name="text_muted">#FFA8A49B</color>
+  <color name="accent">#FFB05230</color>
+  <color name="accent_text">#FFE59A7B</color>
+  <color name="on_accent">#FFFFFFFF</color>
+  <color name="danger">#FFF2A99B</color>
+  <color name="danger_soft">#FF3A2522</color>
+  <color name="live">#FFA3BB8E</color>
+</resources>

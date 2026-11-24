@@ -8,15 +8,15 @@ Talk with your live Claude Code session, such as [Firstmate](https://github.com/
 
 You leave the desk with Firstmate halfway through a batch of work. Earbuds in, a small mic clipped to your collar, phone in your pocket.
 
-On the way out, you open Walkie Talkie, choose your Firstmate session, tap **Start**, and touch the fingerprint sensor. You hear "Connected to" and the session's name. You lock the phone and walk.
+On the way out, you open Walkie Talkie, tap your Firstmate session, and touch the fingerprint sensor. You hear "You're talking to" and the session's name. You lock the phone and walk.
 
 Then you just talk. "What's everyone working on?" When you stop, your words go through, a quick "Pondering." tells you they arrived, and Firstmate's answer plays in your earbuds. "Tell the README task to lead with the use case." If Firstmate is still busy, you hear "It's in the queue," and your message runs after the current turn. Talk over a reply to cut it short, as in a phone call, or tap an earbud. Either one stops the turn. If you stop to chat with someone, say "pause", and "go" when you're done.
 
 If you've set up a front desk, you can talk to it while Firstmate is deep in a long turn. It answers from Firstmate's status and files everything else for Firstmate to pick up. When Firstmate wants to merge, it reads the exact action back, and you hear it word for word. You say "yes", take out the phone, and confirm with your fingerprint. A voice alone confirms nothing there.
 
-To talk to another session, such as one on your personal login, choose it in the app, or say "switch session". The app groups sessions by login, and names a Firstmate secondmate by the secondmate it is. Either way, you confirm with your fingerprint, as at Start, and you hear the name of the session you're now talking to.
+To talk to another session, such as one on your personal login, tap it in the app, or say "switch session". The app groups sessions by login, and names a Firstmate secondmate by the secondmate it is. Either way, you confirm with your fingerprint, as when you started, and you hear the name of the session you're now talking to.
 
-You never type. Apart from Start, a switch, and a confirmation, the phone stays in your pocket.
+You never type. Apart from starting a call, a switch, and a confirmation, the phone stays in your pocket.
 
 ## Who it's for
 
@@ -89,7 +89,7 @@ cd walkie-talkie
 
    Sessions started after this load the mod by themselves. In a session that was already running, type `/reload-plugins` once.
 
-1. Plug the mic's receiver into the phone, connect the earbuds, and open the app. Choose a session, tap **Start**, and touch the fingerprint sensor. Then lock the phone and talk.
+1. Plug the mic's receiver into the phone, connect the earbuds, and open the app. Tap a session, and touch the fingerprint sensor. Then lock the phone and talk.
 
 To keep some folders off the phone, to set up a front desk, or for everything else, see [Documentation](#documentation).
 
@@ -101,9 +101,9 @@ To change how fast the voice talks, how long it pauses between sentences and sec
 
 A live session can do anything you can do at its keyboard, so getting into one should be as hard as getting into your bank account. When in doubt, Walkie Talkie does what a banking app does.
 
-**Getting in.** To talk to a session, someone needs all of these at once: a device on your tailnet, at the paired phone's address, holding the paired app's secret token, and your fingerprint on that phone's hardware key, for that session, at that Start.
+**Getting in.** To talk to a session, someone needs all of these at once: a device on your tailnet, at the paired phone's address, holding the paired app's secret token, and your fingerprint on that phone's hardware key, for that session, at the start of that call.
 
-- **A fingerprint at every Start and every switch.** It unlocks a key in the phone's secure hardware for one signature. The gateway and the session both check it before the session takes a spoken prompt.
+- **A fingerprint at every call and every switch.** It unlocks a key in the phone's secure hardware for one signature. The gateway and the session both check it before the session takes a spoken prompt.
 - **Private network only.** The gateway listens only on the Mac's Tailscale address, and accepts only the one paired phone. No port faces the internet. The app dials the Mac only through the VPN network, so with Tailscale off on the phone, it sends nothing.
 - **The call is encrypted by the app and the gateway themselves.** Every frame after the login is encrypted and authenticated with a key made for that one connection from the pairing token and both sides' login nonces. Tailscale is a second layer around it, not the only one.
 - **Only the sessions you allow.** The mod connects only on the logins you name, and you can keep folders and repositories off the phone.

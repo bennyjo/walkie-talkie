@@ -3,8 +3,22 @@
   <style name="AppTheme" parent="@android:style/Theme.DeviceDefault.DayNight">
     <item name="android:windowActionBar">false</item>
     <item name="android:windowNoTitle">true</item>
-    <item name="android:colorAccent">#FF58C4A8</item>
+    <item name="android:windowBackground">@color/bg</item>
+    <item name="android:statusBarColor">@color/bg</item>
+    <item name="android:navigationBarColor">@color/bg</item>
+    <item name="android:colorAccent">@color/accent_text</item>
+    <item name="android:colorControlActivated">@color/accent_text</item>
+    <item name="android:textColorPrimary">@color/text</item>
+    <item name="android:textColorSecondary">@color/text_muted</item>
+    <item name="android:textColorHint">@color/text_muted</item>
+    <item name="android:alertDialogTheme">@style/DialogTheme</item>
     <item name="android:windowLightStatusBar">false</item>
     <item name="android:windowLightNavigationBar">false</item>
+  </style>
+  <style name="DialogTheme" parent="@android:style/Theme.DeviceDefault.Dialog.Alert">
+    <item name="android:colorAccent">@color/accent_text</item>
+    <item name="android:colorBackground">@color/surface</item>
+    <item name="android:textColorPrimary">@color/text</item>
+    <item name="android:textColorSecondary">@color/text_muted</item>
   </style>
 </resources>

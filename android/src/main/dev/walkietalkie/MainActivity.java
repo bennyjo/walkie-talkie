@@ -2,11 +2,11 @@ package dev.walkietalkie;
 
 import android.Manifest;
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.Intent;
 import android.content.pm.PackageManager;
-import android.content.res.ColorStateList;
-import android.graphics.Color;
-import android.graphics.Typeface;
+import android.graphics.Insets;
+import android.graphics.drawable.GradientDrawable;
 import android.hardware.biometrics.BiometricManager;
 import android.hardware.biometrics.BiometricPrompt;
 import android.media.AudioDeviceInfo;
@@ -19,75 +19,112 @@ import android.os.SystemClock;
 import android.security.keystore.KeyExpiredException;
 import android.security.keystore.KeyPermanentlyInvalidatedException;
 import android.text.InputType;
-import android.text.SpannableStringBuilder;
-import android.text.Spanned;
-import android.text.style.ForegroundColorSpan;
-import android.text.style.RelativeSizeSpan;
+import android.text.TextUtils;
 import android.util.Log;
-import android.util.TypedValue;
+import android.view.Gravity;
 import android.view.View;
-import android.view.inputmethod.InputMethodManager;
-import android.window.OnBackInvokedCallback;
-import android.window.OnBackInvokedDispatcher;
+import android.view.WindowInsets;
 import android.view.WindowManager;
+import android.view.inputmethod.InputMethodManager;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.FrameLayout;
 import android.widget.LinearLayout;
-import android.widget.RadioButton;
-import android.widget.RadioGroup;
 import android.widget.ScrollView;
 import android.widget.TextView;
+import android.window.OnBackInvokedCallback;
+import android.window.OnBackInvokedDispatcher;
 import java.io.IOException;
 import java.security.GeneralSecurityException;
 import java.security.Signature;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
+import java.util.Calendar;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.TreeMap;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
 /**
- * One screen: pair with the Mac, choose a session, and tap Start. Start asks for a fingerprint, every
- * time, and the fingerprint signs that one session for that one run. While talking, choosing another
- * session switches to it, with a fingerprint too. A read-back that needs a yes, and a spoken switch, are
- * confirmed here with a fingerprint as well. Like a banking app, the screen can't be captured.
+ * Three screens, one shown at a time. Pair: the Mac's address and a code. Home: the sessions, each a card,
+ * and a tap on one starts a call to it. Talk: the session the call is on, a circle that shows the call's
+ * state, the other sessions to switch to with one tap, and End.
+ *
+ * Start asks for a fingerprint, every time, and the fingerprint signs that one session for that one run.
+ * A switch takes a fingerprint too, and the screen names the new session only once the Mac has moved the
+ * call there. A read-back that needs a yes, and a spoken switch, are confirmed here with a fingerprint as
+ * well. Like a banking app, the screen can't be captured.
  */
 public class MainActivity extends Activity {
     private static final String TAG = "walkie";
     private static final long REFRESH_MS = 500;
-    private static final int BRAND_GREEN = 0xFF1F6F5C; // white text stays readable on it, day and night
+    private static final long CALL_REFRESH_MS = 200; // so the circle follows your voice and the reply
     private static final int WARN_DAYS = 3;
     private static final long MESSAGE_MS = 8000; // how long a message shows during a call
-    private static final long SWITCH_WAIT_MS = 5000; // for the Mac to ask for the fingerprint over a tapped session
+    private static final long NOTICE_MS = 6000;  // how long "Now talking to" or "Not switched" shows
+    private static final long SWITCH_WAIT_MS = 5000; // for the Mac to ask for the fingerprint, then to move the call
+    private static final long FADE_MS = 180;
+    private static final String PAIR_AGAIN = "pairAgain";
     private static final String CONNECT_WHY = "Your fingerprint lets this phone talk to that session until you stop.";
 
     private final Handler main = new Handler(Looper.getMainLooper());
-    private LinearLayout pairSection;
-    private LinearLayout pairedSection;
-    private Button pairButton;
-    private Button cancelPairButton;
     private final PairScreen pairScreen = new PairScreen();
-    private LinearLayout talkSection;
-    private LinearLayout confirmSection;
-    private TextView pairedLabel;
-    private TextView pairMessage;
+    private Ui ui;
+
+    // Pair
+    private View pairView;
+    private TextView pairHeadline;
     private EditText addressField;
     private EditText codeField;
-    private Button startButton;
-    private TextView statusLine;
-    private TextView sessionsHint;
-    private RadioGroup sessionsGroup;
-    private TextView voicesHint;
-    private RadioGroup voicesGroup;
-    private String shownVoices;
+    private TextView pairMessage;
+    private Button pairButton;
+    private Button cancelPairButton;
+
+    // Home
+    private View homeView;
+    private TextView greeting;
+    private TextView homeLine;
+    private TextView homeNote;
+    private TextView homeDays;
+    private LinearLayout waitCard;
+    private TextView waitTitle;
+    private TextView waitText;
+    private LinearLayout overCard;
+    private LinearLayout emptyCard;
+    private LinearLayout sessionsList;
+    private TextView homeTip;
+    private TextView pairedLabel;
+
+    // Talk
+    private View talkView;
+    private TextView talkLabel;
+    private GradientDrawable liveDot;
+    private Boolean shownLive;
+    private TextView talkName;
+    private TextView talkAccount;
+    private Orb orb;
+    private TextView stateTitle;
+    private TextView stateHint;
+    private LinearLayout confirmCard;
     private TextView confirmText;
+    private TextView talkNote;
+    private TextView talkDays;
+    private TextView switchLabel;
+    private LinearLayout switchList;
+    private LinearLayout voiceRow;
+    private TextView voiceValue;
+    private TextView detailsToggle;
     private TextView details;
-    private String shownSessions;
+    private boolean detailsOpen;
+
+    private View shownScreen;
+    private String shownHome;
+    private String shownSwitch;
     private boolean resumed;
 
     // The list of sessions while not talking: a link that can see them, and nothing else.
@@ -97,102 +134,290 @@ public class MainActivity extends Activity {
     private volatile JSONObject browseSessions;
     private volatile int browseDays = -1;
     private volatile boolean pairingOver;
-    private JSONObject picked; // the row chosen, until Start
-    private String message;    // what went wrong with the last Start, until the next choice
+    private JSONObject picked; // the card tapped, until its call starts
+    private String message;    // what went wrong with the last Start or switch, until the next choice
     private boolean asking;    // a fingerprint prompt is up
-    private boolean startWanted; // Start was tapped, and waits for the list's connection, as after a permission dialog
-    private JSONObject switching; // the row tapped while talking, until the Mac asks for its fingerprint
+    private boolean startWanted; // a card was tapped, and waits for the list's connection, as after a permission dialog
+    private JSONObject switching; // the session a switch goes to, until the Mac moves the call there or the switch fails
     private String switchingAfter; // the confirmation already waiting at that tap, which isn't the Mac's answer
+    private boolean switchAsked;   // the fingerprint for that switch has been asked for
     private long switchingSince;
+    private String declined;   // the confirmation last turned down here
+    private String notice;     // good news during a call, such as the session it moved to
+    private long noticeSince;
     private String seenMessage;
     private long messageSince;
 
     private final Runnable refresh = new Runnable() {
         @Override public void run() {
             render();
-            main.postDelayed(this, REFRESH_MS);
+            main.postDelayed(this, TalkService.status.running ? CALL_REFRESH_MS : REFRESH_MS);
         }
     };
 
     @Override protected void onCreate(Bundle saved) {
         super.onCreate(saved);
         if (!Variant.TEST) getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        int pad = dp(24);
-        root.setPadding(pad, pad, pad, pad);
+        ui = new Ui(this);
+        FrameLayout root = new FrameLayout(this);
+        root.setBackgroundColor(getColor(R.color.bg));
+        // Edge to edge: the screens sit inside the system bars and above the keyboard.
+        root.setOnApplyWindowInsetsListener((v, insets) -> {
+            Insets bars = insets.getInsets(WindowInsets.Type.systemBars() | WindowInsets.Type.ime()
+                    | WindowInsets.Type.displayCutout());
+            v.setPadding(bars.left, bars.top, bars.right, bars.bottom);
+            return WindowInsets.CONSUMED;
+        });
+        pairView = buildPair();
+        homeView = buildHome();
+        talkView = buildTalk();
+        for (View screen : new View[] {pairView, homeView, talkView}) {
+            screen.setVisibility(View.GONE);
+            root.addView(screen, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT,
+                    FrameLayout.LayoutParams.MATCH_PARENT));
+        }
+        setContentView(root);
+        // A theme change or a turn of the phone rebuilds the screen: an open Pair again form stays open.
+        if (saved != null && saved.getBoolean(PAIR_AGAIN)) pairScreen.pairAgain();
+    }
 
-        TextView title = text(28);
-        title.setText("Walkie Talkie");
-        root.addView(title);
+    @Override protected void onSaveInstanceState(Bundle out) {
+        super.onSaveInstanceState(out);
+        out.putBoolean(PAIR_AGAIN, pairScreen.cancelShown(Pairing.host(this) != null));
+    }
 
-        statusLine = text(16);
-        statusLine.setPadding(0, dp(8), 0, dp(24));
-        root.addView(statusLine);
+    // --- building the screens ------------------------------------------------------
 
-        pairSection = section();
-        pairSection.addView(label("Pair with your Mac"));
-        addressField = field("Mac's Tailscale address, 100.x.y.z",
-                InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
-        codeField = field("8-digit pairing code", InputType.TYPE_CLASS_NUMBER);
-        pairSection.addView(addressField);
-        pairSection.addView(codeField);
-        pairButton = button("Pair", this::pair);
-        pairSection.addView(pairButton);
-        cancelPairButton = button("Cancel", this::cancelPair);
-        pairSection.addView(cancelPairButton);
-        pairMessage = text(14);
-        pairMessage.setPadding(0, dp(8), 0, 0);
-        pairSection.addView(pairMessage);
-        root.addView(pairSection);
-
-        confirmSection = section();
-        confirmSection.addView(label("Confirm with your fingerprint"));
-        confirmText = text(16);
-        confirmText.setPadding(0, 0, 0, dp(8));
-        confirmSection.addView(confirmText);
-        Button confirmButton = button("Confirm", this::confirm);
-        confirmButton.setBackgroundTintList(ColorStateList.valueOf(BRAND_GREEN));
-        confirmButton.setTextColor(Color.WHITE);
-        confirmSection.addView(confirmButton);
-        confirmSection.addView(button("Not now", this::decline));
-        root.addView(confirmSection);
-
-        talkSection = section();
-        talkSection.addView(label("Session"));
-        sessionsHint = text(14);
-        talkSection.addView(sessionsHint);
-        sessionsGroup = new RadioGroup(this);
-        talkSection.addView(sessionsGroup);
-        talkSection.addView(label("Voice"));
-        voicesHint = text(14);
-        talkSection.addView(voicesHint);
-        voicesGroup = new RadioGroup(this);
-        talkSection.addView(voicesGroup);
-        startButton = button("Start", this::toggle);
-        startButton.setBackgroundTintList(ColorStateList.valueOf(BRAND_GREEN));
-        startButton.setTextColor(Color.WHITE);
-        LinearLayout.LayoutParams startSpace = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        startSpace.topMargin = dp(16);
-        talkSection.addView(startButton, startSpace);
-        talkSection.addView(label("Audio"));
-        details = text(14);
-        details.setTextIsSelectable(true);
-        talkSection.addView(details);
-        root.addView(talkSection);
-
-        pairedSection = section();
-        pairedLabel = text(14);
-        pairedLabel.setPadding(0, 0, 0, dp(8));
-        pairedSection.addView(pairedLabel);
-        pairedSection.addView(button("Pair again", this::pairAgain));
-        root.addView(pairedSection);
-
+    /** A screen: its content scrolls, and its bottom bar, if any, stays put. */
+    private LinearLayout screen(LinearLayout content, View bottom) {
+        LinearLayout screen = new LinearLayout(this);
+        screen.setOrientation(LinearLayout.VERTICAL);
         ScrollView scroll = new ScrollView(this);
-        scroll.setFitsSystemWindows(true);
-        scroll.addView(root);
-        setContentView(scroll);
+        scroll.setFillViewport(true);
+        scroll.setClipToPadding(false);
+        scroll.setVerticalFadingEdgeEnabled(true); // content fades out above the bottom bar, rather than being cut
+        scroll.setFadingEdgeLength(ui.dp(Ui.SPACE_XL));
+        content.setPadding(ui.dp(Ui.SPACE_XL), ui.dp(Ui.SPACE_L), ui.dp(Ui.SPACE_XL), ui.dp(Ui.SPACE_XL));
+        scroll.addView(content);
+        screen.addView(scroll, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
+        if (bottom != null) {
+            bottom.setPadding(ui.dp(Ui.SPACE_XL), ui.dp(Ui.SPACE_M), ui.dp(Ui.SPACE_XL), ui.dp(Ui.SPACE_L));
+            screen.addView(bottom);
+        }
+        return screen;
+    }
+
+    private LinearLayout column() {
+        LinearLayout column = new LinearLayout(this);
+        column.setOrientation(LinearLayout.VERTICAL);
+        return column;
+    }
+
+    /** The app's name, small, at the top of Pair and Home. A plain dot stands in for a mark. */
+    private View wordmark() {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        View dot = new View(this);
+        GradientDrawable circle = new GradientDrawable();
+        circle.setShape(GradientDrawable.OVAL);
+        circle.setColor(getColor(R.color.accent));
+        dot.setBackground(circle);
+        row.addView(dot, new LinearLayout.LayoutParams(ui.dp(10), ui.dp(10)));
+        TextView name = ui.text("Walkie Talkie", Ui.SANS_MEDIUM, 15, R.color.text);
+        name.setPadding(ui.dp(Ui.SPACE_S), 0, 0, 0);
+        row.addView(name);
+        row.setPadding(0, ui.dp(Ui.SPACE_S), 0, 0);
+        return row;
+    }
+
+    private View buildPair() {
+        LinearLayout content = column();
+        content.addView(wordmark());
+        pairHeadline = ui.display("Pair with your Mac");
+        content.addView(pairHeadline, ui.below(Ui.SPACE_XXL + Ui.SPACE_S));
+        content.addView(ui.muted("On your Mac, start the gateway with --pair. It shows the Mac's address "
+                + "and an 8-digit code that works once, for two minutes."), ui.below(Ui.SPACE_M));
+
+        LinearLayout card = ui.card();
+        card.setPadding(ui.dp(Ui.SPACE_L), ui.dp(Ui.SPACE_L), ui.dp(Ui.SPACE_L), ui.dp(Ui.SPACE_L + 4));
+        card.addView(ui.label("Mac's Tailscale address"));
+        addressField = ui.field("100.x.y.z",
+                InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
+        card.addView(addressField, ui.below(Ui.SPACE_S));
+        TextView codeLabel = ui.label("Pairing code");
+        card.addView(codeLabel, ui.below(Ui.SPACE_L + 4));
+        codeField = ui.field("8 digits", InputType.TYPE_CLASS_NUMBER);
+        card.addView(codeField, ui.below(Ui.SPACE_S));
+        content.addView(card, ui.below(Ui.SPACE_XL));
+
+        pairMessage = ui.note(true);
+        content.addView(pairMessage, ui.below(Ui.SPACE_L));
+
+        LinearLayout bottom = column();
+        pairButton = ui.primary("Pair", this::pair);
+        bottom.addView(pairButton, ui.below(0));
+        cancelPairButton = ui.quiet("Cancel", this::cancelPair);
+        bottom.addView(cancelPairButton, ui.below(Ui.SPACE_XS));
+        return screen(content, bottom);
+    }
+
+    private View buildHome() {
+        LinearLayout content = column();
+        content.addView(wordmark());
+        greeting = ui.display("");
+        content.addView(greeting, ui.below(Ui.SPACE_XXL + Ui.SPACE_S));
+        homeLine = ui.muted("");
+        content.addView(homeLine, ui.below(Ui.SPACE_S));
+
+        homeNote = ui.note(false);
+        content.addView(homeNote, ui.below(Ui.SPACE_XL));
+        homeDays = ui.note(false);
+        content.addView(homeDays, ui.below(Ui.SPACE_M));
+
+        waitCard = ui.card();
+        waitTitle = ui.title("Looking for your Mac");
+        waitCard.addView(waitTitle);
+        waitText = ui.muted("");
+        waitCard.addView(waitText, ui.below(Ui.SPACE_S));
+        content.addView(waitCard, ui.below(Ui.SPACE_XL));
+
+        overCard = ui.card();
+        overCard.addView(ui.title("This pairing has ended"));
+        overCard.addView(ui.muted("A pairing lasts 30 days. Start the gateway with --pair on your Mac, "
+                + "then pair again with the new code."), ui.below(Ui.SPACE_S));
+        overCard.addView(ui.primary("Pair again", this::pairAgain), ui.below(Ui.SPACE_L));
+        content.addView(overCard, ui.below(Ui.SPACE_XL));
+
+        emptyCard = ui.card();
+        emptyCard.addView(ui.title("No sessions yet"));
+        emptyCard.addView(ui.muted("In the session you want to talk to, run /\u2060reload\u2011plugins. If it says 0 plugins, "
+                + "install the mod first. Worker sessions never show here."), ui.below(Ui.SPACE_S));
+        content.addView(emptyCard, ui.below(Ui.SPACE_XL));
+
+        sessionsList = column();
+        content.addView(sessionsList, ui.below(Ui.SPACE_S));
+
+        homeTip = ui.muted("Plug in the USB mic and connect your earbuds before you start.");
+        homeTip.setTextSize(14);
+        content.addView(homeTip, ui.below(Ui.SPACE_XL));
+
+        // Pushes the footer to the bottom of a short page.
+        content.addView(new View(this), new LinearLayout.LayoutParams(1, 0, 1f));
+        LinearLayout footer = new LinearLayout(this);
+        footer.setOrientation(LinearLayout.HORIZONTAL);
+        footer.setGravity(Gravity.CENTER_VERTICAL);
+        pairedLabel = ui.muted("");
+        pairedLabel.setTextSize(14);
+        footer.addView(pairedLabel, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        LinearLayout.LayoutParams flush = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        flush.setMarginEnd(-ui.dp(Ui.SPACE_L)); // the button's text lines up with the gutter
+        footer.addView(ui.quiet("Pair again", this::pairAgain), flush);
+        content.addView(footer, ui.below(Ui.SPACE_XL));
+        return screen(content, null);
+    }
+
+    private View buildTalk() {
+        LinearLayout content = column();
+        content.setGravity(Gravity.CENTER_HORIZONTAL);
+
+        LinearLayout labelRow = new LinearLayout(this);
+        labelRow.setGravity(Gravity.CENTER_VERTICAL);
+        View live = new View(this);
+        liveDot = new GradientDrawable();
+        liveDot.setShape(GradientDrawable.OVAL);
+        liveDot.setColor(getColor(R.color.live));
+        live.setBackground(liveDot);
+        labelRow.addView(live, new LinearLayout.LayoutParams(ui.dp(8), ui.dp(8)));
+        talkLabel = ui.label("Talking to");
+        talkLabel.setTextColor(getColor(R.color.live));
+        talkLabel.setPadding(ui.dp(Ui.SPACE_S), 0, 0, 0);
+        labelRow.addView(talkLabel);
+        content.addView(labelRow, centered(Ui.SPACE_L));
+
+        talkName = ui.display("");
+        talkName.setGravity(Gravity.CENTER);
+        content.addView(talkName, centered(Ui.SPACE_S));
+        talkAccount = ui.muted("");
+        talkAccount.setGravity(Gravity.CENTER);
+        content.addView(talkAccount, centered(Ui.SPACE_XS));
+
+        orb = new Orb(this);
+        LinearLayout.LayoutParams orbSpace = new LinearLayout.LayoutParams(ui.dp(240), ui.dp(240));
+        orbSpace.topMargin = ui.dp(Ui.SPACE_M);
+        content.addView(orb, orbSpace);
+        stateTitle = ui.title("");
+        stateTitle.setGravity(Gravity.CENTER);
+        content.addView(stateTitle, centered(0));
+        stateHint = ui.muted("");
+        stateHint.setGravity(Gravity.CENTER);
+        content.addView(stateHint, centered(Ui.SPACE_XS));
+
+        confirmCard = ui.card();
+        confirmCard.setPadding(ui.dp(Ui.SPACE_XL), ui.dp(Ui.SPACE_XL), ui.dp(Ui.SPACE_XL), ui.dp(Ui.SPACE_L));
+        confirmCard.addView(ui.label("Waiting for your fingerprint"));
+        confirmText = ui.title("");
+        confirmText.setLineSpacing(0, 1.15f);
+        confirmCard.addView(confirmText, ui.below(Ui.SPACE_S));
+        confirmCard.addView(ui.primary("Confirm with fingerprint", this::confirm), ui.below(Ui.SPACE_XL));
+        confirmCard.addView(ui.quiet("Not now", this::decline), ui.below(Ui.SPACE_XS));
+        content.addView(confirmCard, ui.below(Ui.SPACE_XXL));
+
+        talkNote = ui.note(false);
+        content.addView(talkNote, ui.below(Ui.SPACE_XL));
+        talkDays = ui.note(false);
+        content.addView(talkDays, ui.below(Ui.SPACE_M));
+
+        switchLabel = ui.label("Switch to");
+        content.addView(switchLabel, ui.below(Ui.SPACE_XXL));
+        switchList = column();
+        content.addView(switchList, ui.below(0));
+
+        voiceRow = row("Voice", this::chooseVoiceDialog);
+        voiceValue = (TextView) voiceRow.getChildAt(1);
+        content.addView(voiceRow, ui.below(Ui.SPACE_XL));
+
+        LinearLayout detailsRow = row("Audio details", () -> {
+            detailsOpen = !detailsOpen;
+            render();
+        });
+        detailsToggle = (TextView) detailsRow.getChildAt(1);
+        content.addView(detailsRow, ui.below(Ui.SPACE_S));
+        details = ui.muted("");
+        details.setTextSize(13);
+        details.setTextIsSelectable(true);
+        details.setTypeface(android.graphics.Typeface.MONOSPACE);
+        details.setPadding(ui.dp(Ui.SPACE_L + 4), ui.dp(Ui.SPACE_M), ui.dp(Ui.SPACE_L), 0);
+        content.addView(details, ui.below(0));
+
+        LinearLayout bottom = column();
+        bottom.addView(ui.primary("End call", this::endCall), ui.below(0));
+        return screen(content, bottom);
+    }
+
+    private LinearLayout.LayoutParams centered(int topDp) {
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        params.topMargin = ui.dp(topDp);
+        params.gravity = Gravity.CENTER_HORIZONTAL;
+        return params;
+    }
+
+    /** A card-like row with a name on the left and a value on the right, which opens something. */
+    private LinearLayout row(String name, Runnable action) {
+        LinearLayout row = ui.tappableCard(action);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(ui.dp(Ui.SPACE_L + 4), ui.dp(Ui.SPACE_L), ui.dp(Ui.SPACE_L + 4), ui.dp(Ui.SPACE_L));
+        TextView left = ui.body(name);
+        row.addView(left, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        TextView right = ui.muted("");
+        right.setGravity(Gravity.END);
+        right.setSingleLine(true);
+        right.setEllipsize(TextUtils.TruncateAt.END);
+        row.addView(right, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.4f));
+        return row;
     }
 
     @Override protected void onResume() {
@@ -208,7 +433,7 @@ public class MainActivity extends Activity {
         super.onPause();
     }
 
-    // --- the list, before Start ---------------------------------------------------
+    // --- the list, before a call ---------------------------------------------------
 
     private final GatewayLink.Listener browseListener = new GatewayLink.Listener() {
         @Override public void onSpeech(int generation, byte[] packet, int offset, int length) { }
@@ -258,10 +483,11 @@ public class MainActivity extends Activity {
         String code = codeField.getText().toString().trim();
         if (!Pairing.allowedAddress(address)) {
             pairMessage.setText("That isn't a Tailscale address. It starts with 100.");
+            render();
             return;
         }
         if (!pairScreen.pairing()) return;
-        pairMessage.setText("Pairing");
+        pairMessage.setText("");
         render();
         new Thread(() -> {
             String shown = "";
@@ -342,34 +568,40 @@ public class MainActivity extends Activity {
         message = null;
     }
 
-    private void toggle() {
-        if (TalkService.status.running) {
-            message = null;
-            switching = null;
-            stopService(new Intent(this, TalkService.class));
-        } else if (picked == null) {
-            message = "Choose a session first.";
-            render();
-        } else if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+    /** A card tapped on Home: the call to that session starts, after the fingerprint. */
+    private void startWith(JSONObject session) {
+        if (TalkService.status.running || startWanted || asking) return;
+        message = null;
+        picked = session;
+        TalkService.status.why = null;
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(new String[] {Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS}, 1);
         } else {
             startWanted = true;
-            render();
         }
+        render();
+    }
+
+    private void endCall() {
+        message = null;
+        notice = null;
+        switching = null;
+        stopService(new Intent(this, TalkService.class));
+        render();
     }
 
     @Override public void onRequestPermissionsResult(int request, String[] permissions, int[] results) {
-        // The dialog paused this screen, which closed the list's connection: Start goes on once it's back.
+        // The dialog paused this screen, which closed the list's connection: the call goes on once it's back.
         startWanted = checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED;
     }
 
-    /** Start asks the Mac for a fresh challenge, and the fingerprint signs it. */
+    /** Starting asks the Mac for a fresh challenge, and the fingerprint signs it. */
     private void requestStart() {
         startWanted = false;
         try {
             browse.sendControl(new JSONObject().put("t", "nonce"));
         } catch (JSONException e) {
-            message = "That didn't work. Tap Start again.";
+            message = "That didn't work. Tap the session again.";
         }
     }
 
@@ -388,9 +620,10 @@ public class MainActivity extends Activity {
                         .put("sig", signature);
                 stopBrowse();
                 message = null;
+                notice = null;
                 TalkService.start(this, run, approve, name);
             } catch (JSONException e) {
-                message = "That didn't work. Tap Start again.";
+                message = "That didn't work. Tap the session again.";
             }
         });
     }
@@ -421,10 +654,16 @@ public class MainActivity extends Activity {
         }
         String title = target != null ? text : "Confirm";
         String description = target != null ? CONNECT_WHY : text;
-        fingerprint(title, description, signed, signature -> startService(new Intent(this, TalkService.class)
-                .setAction(TalkService.ACTION_CONFIRMED)
-                .putExtra(TalkService.EXTRA_NONCE, nonce)
-                .putExtra(TalkService.EXTRA_SIG, signature)), tapped ? () -> decline(nonce) : null);
+        fingerprint(title, description, signed, signature -> {
+            if (target != null) waitForSwitch(target);
+            startService(new Intent(this, TalkService.class)
+                    .setAction(TalkService.ACTION_CONFIRMED)
+                    .putExtra(TalkService.EXTRA_NONCE, nonce)
+                    .putExtra(TalkService.EXTRA_SIG, signature));
+        }, tapped ? () -> {
+            decline(nonce);
+            notSwitched();
+        } : null);
     }
 
     private void decline() {
@@ -433,53 +672,95 @@ public class MainActivity extends Activity {
     }
 
     private void decline(String nonce) {
+        declined = nonce; // the card goes now, not when the service has passed the no on
         startService(new Intent(this, TalkService.class)
                 .setAction(TalkService.ACTION_DECLINED)
                 .putExtra(TalkService.EXTRA_NONCE, nonce));
     }
 
-    /** A row tapped in the list. Before Start, it's the choice. While talking, it switches the call there. */
-    private void choose(JSONObject session) {
-        message = null;
+    /** A session tapped under Switch to: the call moves there, after the fingerprint. */
+    private void switchTo(JSONObject session) {
         TalkService.Status status = TalkService.status;
-        if (!status.running) {
-            picked = session;
-            status.why = null;
-        } else if (session.optString("id").equals(chosenId(status)) || status.run == null) {
-            switching = null;
-            shownSessions = null; // the check goes back to the session you're on
-        } else {
-            switching = session;
-            switchingSince = SystemClock.elapsedRealtime();
-            switchingAfter = status.confirm == null ? null : status.confirm.optString("nonce");
-            startService(new Intent(this, TalkService.class)
-                    .setAction(TalkService.ACTION_SWITCH)
-                    .putExtra(TalkService.EXTRA_SESSION, session.optString("id")));
-        }
+        if (!status.running || status.run == null || switching != null || asking) return;
+        if (session.optString("id").equals(chosenId(status))) return;
+        message = null;
+        notice = null;
+        switching = session;
+        switchAsked = false;
+        switchingSince = SystemClock.elapsedRealtime();
+        switchingAfter = status.confirm == null ? null : status.confirm.optString("nonce");
+        startService(new Intent(this, TalkService.class)
+                .setAction(TalkService.ACTION_SWITCH)
+                .putExtra(TalkService.EXTRA_SESSION, session.optString("id")));
         render();
     }
 
-    /** Once the Mac asks for the fingerprint over the tapped session, the prompt comes up with no more taps. */
+    /** The fingerprint signed a switch: the screen says Switching until the Mac reports the call on that session. */
+    private void waitForSwitch(JSONObject target) {
+        JSONObject row = rowById(TalkService.status.sessions, target.optString("id"));
+        switching = row != null ? row : target;
+        switchAsked = true;
+        switchingSince = SystemClock.elapsedRealtime();
+    }
+
+    /** The switch was turned down here, so the note is plain: nothing went wrong. */
+    private void notSwitched() {
+        switching = null;
+        String session = currentName(TalkService.status);
+        notice = session == null ? "Not switched." : "Not switched. You're still talking to " + session + ".";
+        noticeSince = SystemClock.elapsedRealtime();
+    }
+
+    /**
+     * Moves a switch along. Once the Mac asks for the fingerprint over the tapped session, the prompt comes up
+     * with no more taps. The switch is done only when the Mac's list names the new session as chosen.
+     */
     private void checkSwitch(TalkService.Status status) {
         if (switching == null) return;
+        String id = switching.optString("id");
         JSONObject confirm = status.confirm;
         JSONObject target = confirm == null ? null : confirm.optJSONObject("switch");
         if (!status.running) {
             switching = null;
-        } else if (target != null && target.optString("id").equals(switching.optString("id"))
+        } else if (id.equals(chosenId(status))) {
+            switching = null;
+            notice = "Now talking to " + currentName(status) + ".";
+            noticeSince = SystemClock.elapsedRealtime();
+        } else if (!switchAsked && target != null && target.optString("id").equals(id)
                 && !confirm.optString("nonce").equals(switchingAfter)) {
             if (!resumed || asking) return;
-            switching = null;
+            switchAsked = true;
             confirm(true);
-        } else if (SystemClock.elapsedRealtime() - switchingSince > SWITCH_WAIT_MS) {
+        } else if (!asking && SystemClock.elapsedRealtime() - switchingSince > SWITCH_WAIT_MS) {
             switching = null;
-            message = "The call didn't move. You're still talking to " + status.session + ".";
+            message = "The call didn't move. You're still talking to " + currentName(status) + ".";
         }
     }
 
     private static String chosenId(TalkService.Status status) {
         JSONObject sessions = status.sessions;
         return sessions == null || sessions.isNull("chosen") ? null : sessions.optString("chosen");
+    }
+
+    private static JSONObject rowById(JSONObject sessions, String id) {
+        JSONArray list = sessions == null ? null : sessions.optJSONArray("list");
+        if (list == null || id == null) return null;
+        for (int i = 0; i < list.length(); i++) {
+            JSONObject row = list.optJSONObject(i);
+            if (row != null && id.equals(row.optString("id"))) return row;
+        }
+        return null;
+    }
+
+    /** The session the call is on, as the Mac last said, or as tapped until the Mac's list comes. */
+    private JSONObject currentRow(TalkService.Status status) {
+        JSONObject row = rowById(status.sessions, chosenId(status));
+        return row != null ? row : picked;
+    }
+
+    private String currentName(TalkService.Status status) {
+        JSONObject row = rowById(status.sessions, chosenId(status));
+        return row != null ? rowName(row) : status.session;
     }
 
     private interface Signed {
@@ -497,18 +778,18 @@ public class MainActivity extends Activity {
             signer = PhoneKey.signer(Pairing.keySlot(this));
         } catch (GeneralSecurityException | IOException e) {
             Log.e(TAG, "the key won't sign", e);
+            if (cancelled != null) cancelled.run();
             message = e instanceof KeyPermanentlyInvalidatedException || e instanceof KeyExpiredException
                     ? "This phone's key has gone, because a fingerprint changed or the pairing ran out. Tap Pair again. "
                             + describe(e)
                     : "The key won't sign: " + describe(e);
-            if (cancelled != null) cancelled.run();
             render();
             return;
         }
         if (getSystemService(BiometricManager.class).canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG)
                 != BiometricManager.BIOMETRIC_SUCCESS) {
-            message = "Add a fingerprint in the phone's settings first.";
             if (cancelled != null) cancelled.run();
+            message = "Add a fingerprint in the phone's settings first.";
             render();
             return;
         }
@@ -541,9 +822,12 @@ public class MainActivity extends Activity {
 
                     @Override public void onAuthenticationError(int code, CharSequence why) {
                         asking = false;
-                        message = code == BiometricPrompt.BIOMETRIC_ERROR_USER_CANCELED
-                                || code == BiometricPrompt.BIOMETRIC_ERROR_CANCELED ? null : why + ".";
+                        message = null;
                         if (cancelled != null) cancelled.run();
+                        if (code != BiometricPrompt.BIOMETRIC_ERROR_USER_CANCELED
+                                && code != BiometricPrompt.BIOMETRIC_ERROR_CANCELED) {
+                            message = why + ".";
+                        }
                         if (!resumed) stopBrowse();
                         render();
                     }
@@ -566,6 +850,30 @@ public class MainActivity extends Activity {
                 .setAction(TalkService.ACTION_VOICE).putExtra(TalkService.EXTRA_VOICE, voice));
     }
 
+    private void chooseVoiceDialog() {
+        JSONObject voices = TalkService.status.voices;
+        JSONArray list = voices == null ? null : voices.optJSONArray("list");
+        if (list == null || list.length() == 0) return;
+        String chosen = voices.optString("chosen");
+        String[] names = new String[list.length()];
+        String[] ids = new String[list.length()];
+        int checked = -1;
+        for (int i = 0; i < list.length(); i++) {
+            JSONObject voice = list.optJSONObject(i);
+            names[i] = voice == null ? "" : voice.optString("name");
+            ids[i] = voice == null ? "" : voice.optString("id");
+            if (ids[i].equals(chosen)) checked = i;
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("Voice")
+                .setSingleChoiceItems(names, checked, (dialog, which) -> {
+                    chooseVoice(ids[which]);
+                    dialog.dismiss();
+                })
+                .setNegativeButton("Close", null)
+                .show();
+    }
+
     // --- drawing -----------------------------------------------------------------
 
     private void render() {
@@ -573,17 +881,11 @@ public class MainActivity extends Activity {
         TalkService.Status status = TalkService.status;
         boolean paired = host != null;
         boolean form = pairScreen.formShown(paired);
-        pairSection.setVisibility(form ? View.VISIBLE : View.GONE);
-        cancelPairButton.setVisibility(pairScreen.cancelShown(paired) ? View.VISIBLE : View.GONE);
-        pairButton.setEnabled(pairScreen.idle());
-        cancelPairButton.setEnabled(pairScreen.idle());
         watchBack(pairScreen.cancelShown(paired));
-        talkSection.setVisibility(paired && !form ? View.VISIBLE : View.GONE);
-        pairedSection.setVisibility(paired && !form ? View.VISIBLE : View.GONE);
-        confirmSection.setVisibility(status.running && status.confirm != null ? View.VISIBLE : View.GONE);
-        if (!paired) {
-            stopBrowse();
-            show(statusLine, "Not paired yet.");
+        if (form) {
+            renderPair(paired);
+            showScreen(pairView);
+            if (!paired) stopBrowse();
             return;
         }
         if (status.pairingOver) pairingOver = true;
@@ -599,15 +901,205 @@ public class MainActivity extends Activity {
         if (status.running && message != null && SystemClock.elapsedRealtime() - messageSince > MESSAGE_MS) {
             message = null;
         }
+        if (notice != null && SystemClock.elapsedRealtime() - noticeSince > NOTICE_MS) notice = null;
         checkSwitch(status);
-        if (status.confirm != null) show(confirmText, status.confirm.optString("text"));
+        if (status.running) {
+            renderTalk(status);
+            showScreen(talkView);
+        } else {
+            switching = null;
+            notice = null;
+            renderHome(status, host);
+            showScreen(homeView);
+        }
+    }
+
+    /** Shows one screen, with a short fade when it changes. */
+    private void showScreen(View screen) {
+        if (screen == shownScreen) return;
+        if (shownScreen != null) shownScreen.setVisibility(View.GONE);
+        shownScreen = screen;
+        screen.setAlpha(0f);
+        screen.setVisibility(View.VISIBLE);
+        screen.animate().alpha(1f).setDuration(FADE_MS).start();
+    }
+
+    private void renderPair(boolean paired) {
+        boolean idle = pairScreen.idle();
+        show(pairHeadline, paired ? "Pair again" : "Pair with your Mac");
+        show(pairButton, idle ? "Pair" : "Pairing\u2026");
+        pairButton.setEnabled(idle);
+        pairButton.setAlpha(idle ? 1f : 0.6f);
+        cancelPairButton.setEnabled(idle);
+        Ui.shown(cancelPairButton, pairScreen.cancelShown(paired));
+        Ui.shown(pairMessage, pairMessage.getText().length() > 0);
+    }
+
+    private void renderHome(TalkService.Status status, String host) {
+        show(greeting, greeting());
         show(pairedLabel, "Paired with " + host);
-        show(startButton, status.running ? "Stop" : "Start");
-        show(statusLine, statusText(status));
-        renderSessions(status);
-        renderVoices(status);
-        show(details, status.running ? detailsText(status)
-                : "Connect your USB mic and your headphones before you start.");
+        boolean starting = (startWanted || asking) && picked != null;
+        show(homeLine, starting ? "Asking your Mac to start " + rowName(picked) + "."
+                : "Choose a session to start talking.");
+
+        String note = message != null ? message : status.why != null ? status.why + "." : null;
+        note(homeNote, note, message != null);
+        note(homeDays, pairingOver ? null : daysLeft(browseDays), false);
+
+        Ui.shown(overCard, pairingOver);
+        boolean waiting = !pairingOver && !browseConnected;
+        Ui.shown(waitCard, waiting);
+        if (waiting) show(waitText, browseWhy != null ? browseWhy + "."
+                : "Make sure the gateway runs on your Mac, and Tailscale is on here and there.");
+
+        JSONObject sessions = browseConnected && !pairingOver ? browseSessions : null;
+        JSONArray list = sessions == null ? null : sessions.optJSONArray("list");
+        boolean empty = sessions != null && (list == null || list.length() == 0);
+        if (empty) picked = null;
+        Ui.shown(emptyCard, empty);
+        Ui.shown(homeTip, list != null && list.length() > 0);
+        Ui.shown(homeLine, starting || list != null && list.length() > 0);
+
+        String key = (list == null ? "" : list.toString()) + ":" + (starting ? picked.optString("id") : "");
+        if (key.equals(shownHome)) return;
+        shownHome = key;
+        sessionsList.removeAllViews();
+        if (list == null) return;
+        String pickedId = picked == null ? null : picked.optString("id");
+        Set<String> twins = twins(list);
+        boolean headed = false;
+        Map<String, List<JSONObject>> groups = byLogin(list);
+        for (String login : groups.keySet()) headed |= !login.isEmpty();
+        headed |= groups.size() > 1;
+        for (Map.Entry<String, List<JSONObject>> group : groups.entrySet()) {
+            if (headed) sessionsList.addView(ui.label(accountName(group.getKey())), ui.below(Ui.SPACE_XL));
+            for (JSONObject session : group.getValue()) {
+                boolean isStarting = starting && session.optString("id").equals(pickedId);
+                if (session.optString("id").equals(pickedId)) picked = session; // its challenge may be new
+                String meta = isStarting ? "Connecting\u2026" : rowMeta(session, twins);
+                sessionsList.addView(sessionCard(session, meta, isStarting, () -> startWith(session)),
+                        ui.below(Ui.SPACE_S + 2));
+            }
+        }
+    }
+
+    private void renderTalk(TalkService.Status status) {
+        JSONObject row = currentRow(status);
+        String name = row != null ? row.optString("name") : status.session;
+        show(talkName, name == null ? "" : name);
+        String account = row == null ? "" : join(" \u00b7 ", row.optString("login").isEmpty() ? ""
+                : accountName(row.optString("login")), row.optString("where"));
+        show(talkAccount, account);
+        Ui.shown(talkAccount, !account.isEmpty());
+        show(talkLabel, status.connected ? "Talking to" : "Connecting to");
+        if (!Boolean.valueOf(status.connected).equals(shownLive)) {
+            shownLive = status.connected; // green while the call is live, grey while it reconnects
+            int colour = getColor(status.connected ? R.color.live : R.color.text_muted);
+            liveDot.setColor(colour);
+            talkLabel.setTextColor(colour);
+        }
+
+        boolean confirming = status.confirm != null && switching == null
+                && !status.confirm.optString("nonce").equals(declined);
+        Ui.shown(confirmCard, confirming);
+        Ui.shown(orb, !confirming);
+        Ui.shown(stateTitle, !confirming);
+        Ui.shown(stateHint, !confirming);
+        if (confirming) show(confirmText, status.confirm.optString("text"));
+
+        int state;
+        String title;
+        String hint;
+        if (!status.connected) {
+            state = Orb.WAITING;
+            title = "Connecting";
+            hint = status.why != null ? status.why + "." : "Reaching your Mac.";
+        } else if (switching != null) {
+            state = Orb.WAITING;
+            title = "Switching";
+            hint = "To " + rowName(switching) + ".";
+        } else if (status.hearing) {
+            state = Orb.HEARING;
+            title = "Hearing you";
+            hint = "Pause when you're done.";
+        } else if (status.replying) {
+            state = Orb.REPLYING;
+            title = "Replying";
+            hint = "Talk over it to cut in.";
+        } else {
+            state = Orb.LISTENING;
+            title = "Listening";
+            hint = "Lock the phone, and talk.";
+        }
+        orb.setState(state);
+        show(stateTitle, title);
+        show(stateHint, hint);
+
+        if (message != null) note(talkNote, message, true);
+        else if (status.problem != null) note(talkNote, status.problem + ".", true);
+        else note(talkNote, notice, false);
+        note(talkDays, daysLeft(status.pairingDays), false);
+
+        renderSwitchList(status);
+
+        JSONObject voices = status.voices;
+        JSONArray voiceList = voices == null ? null : voices.optJSONArray("list");
+        Ui.shown(voiceRow, voiceList != null && voiceList.length() > 0);
+        if (voiceList != null) {
+            String chosen = voices.optString("chosen");
+            String voiceName = "";
+            for (int i = 0; i < voiceList.length(); i++) {
+                JSONObject voice = voiceList.optJSONObject(i);
+                if (voice != null && voice.optString("id").equals(chosen)) voiceName = voice.optString("name");
+            }
+            show(voiceValue, voiceName);
+        }
+        show(detailsToggle, detailsOpen ? "Hide" : "Show");
+        Ui.shown(details, detailsOpen);
+        if (detailsOpen) show(details, detailsText(status));
+    }
+
+    /** The other sessions, one tap each. The session a switch is going to says so, and nothing moves before the Mac does. */
+    private void renderSwitchList(TalkService.Status status) {
+        JSONObject sessions = status.sessions;
+        JSONArray list = sessions == null ? null : sessions.optJSONArray("list");
+        String current = chosenId(status);
+        String goingTo = switching == null ? "" : switching.optString("id");
+        String key = (list == null ? "" : list.toString()) + ":" + current + ":" + goingTo;
+        if (key.equals(shownSwitch)) return;
+        shownSwitch = key;
+        switchList.removeAllViews();
+        int others = 0;
+        if (list != null) {
+            Set<String> twins = twins(list);
+            for (List<JSONObject> group : byLogin(list).values()) {
+                for (JSONObject session : group) {
+                    String id = session.optString("id");
+                    if (id.equals(current)) continue;
+                    others++;
+                    boolean going = id.equals(goingTo);
+                    String login = session.optString("login");
+                    String meta = going ? "Switching\u2026" : join(" \u00b7 ", login.isEmpty() ? "" : accountName(login),
+                            ago(session), twins.contains(twinKey(session)) ? "session " + session.optString("session") : "");
+                    switchList.addView(sessionCard(session, meta, going, () -> switchTo(session)), ui.below(Ui.SPACE_S + 2));
+                }
+            }
+        }
+        Ui.shown(switchLabel, others > 0);
+    }
+
+    /** A session as a card: its name, and under it, quieter, where it is and when it last took a prompt. */
+    private View sessionCard(JSONObject session, String meta, boolean busy, Runnable action) {
+        LinearLayout card = ui.tappableCard(action);
+        TextView name = ui.text(session.optString("name"), Ui.SANS_MEDIUM, 17, R.color.text);
+        card.addView(name);
+        if (!meta.isEmpty()) {
+            TextView quiet = ui.muted(meta);
+            quiet.setTextSize(14);
+            if (busy) quiet.setTextColor(getColor(R.color.accent_text));
+            card.addView(quiet, ui.below(2));
+        }
+        return card;
     }
 
     /** Changes the text only when it changed, so an idle screen does no drawing. */
@@ -615,149 +1107,42 @@ public class MainActivity extends Activity {
         if (!value.contentEquals(view.getText())) view.setText(value);
     }
 
-    private String statusText(TalkService.Status status) {
-        if (pairingOver) return "This pairing is over 30 days old. Tap Pair again, with a new code from the Mac.";
-        if (status.running) {
-            if (switching != null) return "Switching to " + rowName(switching) + ".";
-            if (status.confirm != null) return "Confirm below with your fingerprint, or tap Not now.";
-            if (!status.connected) return "Connecting to the Mac.";
-            if (message != null) return message;
-            return "Talking to " + status.session + ". Lock the phone, and talk." + daysLeft(status.pairingDays);
-        }
-        if (message != null) return message;
-        if (status.why != null) return status.why + ".";
-        if (!browseConnected) return browseWhy != null ? browseWhy + "." : "Connecting to your Mac.";
-        if (startWanted) return "Asking your Mac to start.";
-        return "Choose a session, then tap Start." + daysLeft(browseDays);
+    private void note(TextView view, String value, boolean danger) {
+        Ui.shown(view, value != null && !value.isEmpty());
+        if (value == null) return;
+        show(view, value);
+        ui.noteStyle(view, danger);
+    }
+
+    private static String greeting() {
+        int hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY);
+        if (hour < 5 || hour >= 18) return "Good evening";
+        return hour < 12 ? "Good morning" : "Good afternoon";
     }
 
     private static String daysLeft(int days) {
-        if (days < 0 || days > WARN_DAYS) return "";
-        return days <= 1 ? " The pairing ends today: pair again at the Mac."
-                : String.format(Locale.ROOT, " The pairing ends in %d days: pair again at the Mac.", days);
-    }
-
-    private void renderSessions(TalkService.Status status) {
-        JSONObject sessions = status.running ? status.sessions : browseSessions;
-        String checkedId = status.running ? (switching != null ? switching.optString("id") : chosenId(status)) : null;
-        String key = (status.running ? "on:" + status.session + ":" + checkedId : "off:")
-                + (sessions == null ? "" : sessions.toString()) + ":" + browseConnected;
-        if (key.equals(shownSessions)) return;
-        shownSessions = key;
-        sessionsGroup.removeAllViews();
-        if (status.running) {
-            renderCallSessions(sessions, checkedId, status.session);
-            return;
-        }
-        JSONArray list = sessions == null ? null : sessions.optJSONArray("list");
-        if (list == null || list.length() == 0) {
-            if (sessions != null) picked = null; // a list with nothing in it; while none has come yet, the choice stands
-            sessionsHint.setVisibility(View.VISIBLE);
-            sessionsHint.setText(!browseConnected || sessions == null
-                    ? "Sessions show here once your Mac answers."
-                    : "Connected. No session has the mod running. In the session, run /reload-plugins. "
-                    + "If that says 0 plugins, install the mod. Worker sessions never show here.");
-            return;
-        }
-        sessionsHint.setVisibility(View.GONE);
-        String pickedId = picked == null ? null : picked.optString("id");
-        picked = null;
-        for (Map.Entry<RadioButton, JSONObject> row : byLogin(list).entrySet()) {
-            RadioButton option = row.getKey();
-            JSONObject session = row.getValue();
-            if (session.optString("id").equals(pickedId)) {
-                option.setChecked(true);
-                picked = session; // its challenge may be new, so keep the row as the Mac last sent it
-            }
-        }
-    }
-
-    /** While talking, the list checks the session the call is on, and choosing another switches there. */
-    private void renderCallSessions(JSONObject sessions, String checkedId, String name) {
-        JSONArray list = sessions == null ? null : sessions.optJSONArray("list");
-        if (list == null || list.length() == 0) { // until the Mac sends the list
-            sessionsHint.setVisibility(View.VISIBLE);
-            sessionsHint.setText(name == null ? "" : name);
-            return;
-        }
-        sessionsHint.setVisibility(list.length() > 1 ? View.VISIBLE : View.GONE);
-        sessionsHint.setText("To switch, choose another session, or say switch session.");
-        for (Map.Entry<RadioButton, JSONObject> row : byLogin(list).entrySet()) {
-            RadioButton option = row.getKey();
-            JSONObject session = row.getValue();
-            if (session.optString("id").equals(checkedId)) option.setChecked(true);
-            if (session.optString("id").equals(chosenId(TalkService.status))) {
-                picked = session; // so after Stop, Start is one tap away from the session you were on
-            }
-        }
+        if (days < 0 || days > WARN_DAYS) return null;
+        return days <= 1 ? "The pairing ends today. Pair again at the Mac."
+                : String.format(Locale.ROOT, "The pairing ends in %d days. Pair again at the Mac.", days);
     }
 
     /**
-     * A row for each session, grouped by login, each group under a heading that names its account, in a fixed order so
-     * a group doesn't move when one of its sessions takes a prompt. Within a group, the Mac's order: the
-     * latest prompt first. A login with no name comes last. With no named login at all, no headings.
+     * Groups sessions by login, in a fixed order so a group doesn't move when one of its sessions takes a
+     * prompt. Within a group, the Mac's order: the latest prompt first. A login with no name comes last.
      */
-    private Map<RadioButton, JSONObject> byLogin(JSONArray list) {
+    private static Map<String, List<JSONObject>> byLogin(JSONArray list) {
         TreeMap<String, List<JSONObject>> groups = new TreeMap<>((a, b) ->
                 a.isEmpty() != b.isEmpty() ? (a.isEmpty() ? 1 : -1) : a.compareToIgnoreCase(b));
         for (int i = 0; i < list.length(); i++) {
             JSONObject session = list.optJSONObject(i);
             if (session != null) groups.computeIfAbsent(session.optString("login"), k -> new ArrayList<>()).add(session);
         }
-        boolean headed = groups.size() > 1 || (groups.size() == 1 && !groups.firstKey().isEmpty());
-        Map<RadioButton, JSONObject> rows = new LinkedHashMap<>();
-        for (Map.Entry<String, List<JSONObject>> group : groups.entrySet()) {
-            if (headed) sessionsGroup.addView(groupHeading(group.getKey()));
-            for (JSONObject session : group.getValue()) rows.put(sessionRow(session), session);
-        }
-        return rows;
+        return groups;
     }
 
-    private TextView groupHeading(String login) {
-        TextView heading = text(13);
-        heading.setText(login.isEmpty() ? "Other account"
-                : login.substring(0, 1).toUpperCase(Locale.ROOT) + login.substring(1) + " account");
-        heading.setTypeface(heading.getTypeface(), Typeface.BOLD);
-        heading.setTextColor(getColor(android.R.color.darker_gray));
-        heading.setPadding(0, dp(14), 0, dp(2));
-        return heading;
-    }
-
-    private RadioButton sessionRow(JSONObject session) {
-        RadioButton option = new RadioButton(this);
-        option.setText(rowText(session));
-        option.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
-        option.setPadding(dp(8), dp(10), 0, dp(10));
-        sessionsGroup.addView(option);
-        option.setOnClickListener(v -> choose(session));
-        return option;
-    }
-
-    private void renderVoices(TalkService.Status status) {
-        JSONObject voices = status.running ? status.voices : null;
-        String key = (status.running ? "on:" : "off:") + (voices == null ? "" : voices.toString());
-        if (key.equals(shownVoices)) return;
-        shownVoices = key;
-        voicesGroup.removeAllViews();
-        JSONArray list = voices == null ? null : voices.optJSONArray("list");
-        if (list == null || list.length() == 0) {
-            voicesHint.setVisibility(View.VISIBLE);
-            voicesHint.setText("Voices show here once you start.");
-            return;
-        }
-        voicesHint.setVisibility(View.GONE);
-        String chosen = voices.optString("chosen");
-        for (int i = 0; i < list.length(); i++) {
-            JSONObject voice = list.optJSONObject(i);
-            String id = voice.optString("id");
-            RadioButton option = new RadioButton(this);
-            option.setText(voice.optString("name"));
-            option.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
-            option.setPadding(dp(8), dp(10), 0, dp(10));
-            voicesGroup.addView(option);
-            option.setChecked(id.equals(chosen));
-            option.setOnClickListener(v -> chooseVoice(id));
-        }
+    private static String accountName(String login) {
+        return login.isEmpty() ? "Other account"
+                : login.substring(0, 1).toUpperCase(Locale.ROOT) + login.substring(1) + " account";
     }
 
     /** The session's name as the Mac says and shows it everywhere, account included: "firstmate on the work account". */
@@ -766,16 +1151,28 @@ public class MainActivity extends Activity {
         return label.isEmpty() ? session.optString("name") : label;
     }
 
-    /**
-     * The name, and under it in smaller, quieter text, where the folder is, then when the session last took a
-     * prompt and its short id. The account is the group's heading. So two sessions of one name differ.
-     */
-    private CharSequence rowText(JSONObject session) {
+    /** Sessions that share a name and a folder, which only their short ids tell apart. */
+    private static Set<String> twins(JSONArray list) {
+        Set<String> seen = new HashSet<>();
+        Set<String> twins = new HashSet<>();
+        for (int i = 0; i < list.length(); i++) {
+            JSONObject session = list.optJSONObject(i);
+            if (session == null) continue;
+            String key = twinKey(session);
+            if (!seen.add(key)) twins.add(key);
+        }
+        return twins;
+    }
+
+    /** Where the session is, when it last took a prompt, and its short id when another looks the same. */
+    private static String rowMeta(JSONObject session, Set<String> twins) {
         String id = session.optString("session");
-        String when = join(" \u00b7 ", ago(session), id.isEmpty() ? "" : "session " + id);
-        String quiet = join("\n", session.optString("where"), when);
-        String name = session.optString("name");
-        return quiet.isEmpty() ? name : withQuietLine(name, quiet);
+        return join(" \u00b7 ", session.optString("where"), ago(session),
+                twins.contains(twinKey(session)) && !id.isEmpty() ? "session " + id : "");
+    }
+
+    private static String twinKey(JSONObject session) {
+        return session.optString("login") + "\n" + session.optString("name") + "\n" + session.optString("where");
     }
 
     private static String join(String between, String... parts) {
@@ -788,22 +1185,14 @@ public class MainActivity extends Activity {
         return text.toString();
     }
 
-    private CharSequence withQuietLine(String first, String second) {
-        SpannableStringBuilder text = new SpannableStringBuilder(first);
-        int start = text.length();
-        text.append('\n').append(second);
-        text.setSpan(new RelativeSizeSpan(0.85f), start, text.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-        text.setSpan(new ForegroundColorSpan(getColor(android.R.color.darker_gray)), start, text.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-        return text;
-    }
-
     private static String ago(JSONObject session) {
         if (session.isNull("ago")) return "";
         long seconds = session.optLong("ago");
-        if (seconds < 60) return "Last prompt just now";
-        if (seconds < 3600) return String.format(Locale.ROOT, "Last prompt %d min ago", seconds / 60);
-        if (seconds < 86400) return String.format(Locale.ROOT, "Last prompt %d h ago", seconds / 3600);
-        return String.format(Locale.ROOT, "Last prompt %d days ago", seconds / 86400);
+        if (seconds < 60) return "last prompt just now";
+        if (seconds < 3600) return String.format(Locale.ROOT, "last prompt %d min ago", seconds / 60);
+        if (seconds < 86400) return String.format(Locale.ROOT, "last prompt %d h ago", seconds / 3600);
+        long days = seconds / 86400;
+        return days == 1 ? "last prompt 1 day ago" : String.format(Locale.ROOT, "last prompt %d days ago", days);
     }
 
     private String detailsText(TalkService.Status status) {
@@ -847,47 +1236,5 @@ public class MainActivity extends Activity {
             default:
                 return "other (" + type + ")";
         }
-    }
-
-    private LinearLayout section() {
-        LinearLayout section = new LinearLayout(this);
-        section.setOrientation(LinearLayout.VERTICAL);
-        section.setPadding(0, 0, 0, dp(24));
-        return section;
-    }
-
-    private TextView text(int sp) {
-        TextView view = new TextView(this);
-        view.setTextAppearance(android.R.style.TextAppearance_DeviceDefault);
-        view.setTextSize(TypedValue.COMPLEX_UNIT_SP, sp);
-        return view;
-    }
-
-    private TextView label(String value) {
-        TextView view = text(14);
-        view.setText(value);
-        view.setPadding(0, dp(20), 0, dp(6));
-        view.setTypeface(view.getTypeface(), Typeface.BOLD);
-        return view;
-    }
-
-    private EditText field(String hint, int inputType) {
-        EditText view = new EditText(this);
-        view.setHint(hint);
-        view.setInputType(inputType);
-        view.setSingleLine(true);
-        return view;
-    }
-
-    private Button button(String value, Runnable action) {
-        Button view = new Button(this);
-        view.setText(value);
-        view.setAllCaps(false);
-        view.setOnClickListener(v -> action.run());
-        return view;
-    }
-
-    private int dp(int value) {
-        return Math.round(TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, value, getResources().getDisplayMetrics()));
     }
 }
