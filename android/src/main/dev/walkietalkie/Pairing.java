@@ -25,6 +25,7 @@ final class Pairing {
     private static final String FILE = "pairing";
     private static final String HOST = "host";
     private static final String TOKEN = "sealed-token";
+    private static final String KEY_SLOT = "key-slot";
     private static final String SEAL_ALIAS = "walkie-token";
     private static final int IV_BYTES = 12;
 
@@ -62,25 +63,36 @@ final class Pairing {
         }
     }
 
-    static void save(Context context, String host, String token) throws GeneralSecurityException, IOException {
-        Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
-        cipher.init(Cipher.ENCRYPT_MODE, sealKey(true));
-        byte[] body = cipher.doFinal(token.getBytes(StandardCharsets.US_ASCII));
-        byte[] sealed = ByteBuffer.allocate(IV_BYTES + body.length).put(cipher.getIV()).put(body).array();
-        prefs(context).edit().putString(HOST, host).putString(TOKEN, Base64.encodeToString(sealed, Base64.NO_WRAP)).apply();
+    /** Which of PhoneKey's two slots holds the key for the saved pairing. */
+    static int keySlot(Context context) {
+        return prefs(context).getInt(KEY_SLOT, 0);
     }
 
-    /** Forgets the Mac, and destroys both keys, so nothing left on the phone can reach it. */
-    static void forget(Context context) {
-        prefs(context).edit().clear().apply();
-        PhoneKey.delete();
-        try {
-            KeyStore store = KeyStore.getInstance("AndroidKeyStore");
-            store.load(null);
-            store.deleteEntry(SEAL_ALIAS);
-        } catch (GeneralSecurityException | IOException ignored) {
-            // Nothing to delete.
-        }
+    /** Replaces the saved pairing, if any, in one write, and drops the old key only after it. */
+    static PairSwap.Vault vault(Context context) {
+        return new PairSwap.Vault() {
+            private final int old = keySlot(context);
+            private final int staged = PhoneKey.otherSlot(old);
+
+            @Override public String stage() throws PhoneKey.Unavailable {
+                return PhoneKey.create(staged);
+            }
+
+            @Override public void commit(String host, String token) throws GeneralSecurityException, IOException {
+                Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+                cipher.init(Cipher.ENCRYPT_MODE, sealKey(true));
+                byte[] body = cipher.doFinal(token.getBytes(StandardCharsets.US_ASCII));
+                byte[] sealed = ByteBuffer.allocate(IV_BYTES + body.length).put(cipher.getIV()).put(body).array();
+                boolean saved = prefs(context).edit().putString(HOST, host)
+                        .putString(TOKEN, Base64.encodeToString(sealed, Base64.NO_WRAP)).putInt(KEY_SLOT, staged).commit();
+                if (!saved) throw new IOException("the pairing couldn't be saved");
+                PhoneKey.delete(old);
+            }
+
+            @Override public void discard() {
+                PhoneKey.delete(staged);
+            }
+        };
     }
 
     private static SharedPreferences prefs(Context context) {

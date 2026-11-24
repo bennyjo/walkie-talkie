@@ -32,6 +32,8 @@ To have the gateway check that messages sound like you, [enroll your voice](usag
 
 A pairing lasts 30 days. Then the app asks you to pair again, with a new code from `walkie-gateway serve --pair`. Adding a fingerprint to the phone also ends the pairing, because it destroys the key.
 
+To pair a paired phone again, tap **Pair again**. The current pairing keeps working until the new one succeeds. To leave the form without pairing, tap **Cancel** or go back. Once you tap **Pair**, you can't cancel until that attempt ends.
+
 ## Install the mod
 
 Name each Claude Code login whose sessions may connect. A login is the folder that `CLAUDE_CONFIG_DIR` points at, or `~/.claude` when it isn't set. Nothing is installed into a login you don't name.

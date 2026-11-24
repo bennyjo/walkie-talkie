@@ -26,6 +26,9 @@ import android.text.style.RelativeSizeSpan;
 import android.util.Log;
 import android.util.TypedValue;
 import android.view.View;
+import android.view.inputmethod.InputMethodManager;
+import android.window.OnBackInvokedCallback;
+import android.window.OnBackInvokedDispatcher;
 import android.view.WindowManager;
 import android.widget.Button;
 import android.widget.EditText;
@@ -66,6 +69,9 @@ public class MainActivity extends Activity {
     private final Handler main = new Handler(Looper.getMainLooper());
     private LinearLayout pairSection;
     private LinearLayout pairedSection;
+    private Button pairButton;
+    private Button cancelPairButton;
+    private final PairScreen pairScreen = new PairScreen();
     private LinearLayout talkSection;
     private LinearLayout confirmSection;
     private TextView pairedLabel;
@@ -131,7 +137,10 @@ public class MainActivity extends Activity {
         codeField = field("8-digit pairing code", InputType.TYPE_CLASS_NUMBER);
         pairSection.addView(addressField);
         pairSection.addView(codeField);
-        pairSection.addView(button("Pair", this::pair));
+        pairButton = button("Pair", this::pair);
+        pairSection.addView(pairButton);
+        cancelPairButton = button("Cancel", this::cancelPair);
+        pairSection.addView(cancelPairButton);
         pairMessage = text(14);
         pairMessage.setPadding(0, dp(8), 0, 0);
         pairSection.addView(pairMessage);
@@ -177,7 +186,7 @@ public class MainActivity extends Activity {
         pairedLabel = text(14);
         pairedLabel.setPadding(0, 0, 0, dp(8));
         pairedSection.addView(pairedLabel);
-        pairedSection.addView(button("Pair again", this::forget));
+        pairedSection.addView(button("Pair again", this::pairAgain));
         root.addView(pairedSection);
 
         ScrollView scroll = new ScrollView(this);
@@ -251,36 +260,86 @@ public class MainActivity extends Activity {
             pairMessage.setText("That isn't a Tailscale address. It starts with 100.");
             return;
         }
+        if (!pairScreen.pairing()) return;
         pairMessage.setText("Pairing");
+        render();
         new Thread(() -> {
             String shown = "";
+            boolean paired = false;
             try {
-                String key = PhoneKey.create();
-                Pairing.save(this, address, GatewayLink.pair(this, address, code, key));
-                pairingOver = false;
+                PairSwap.run(Pairing.vault(this), address, key -> GatewayLink.pair(this, address, code, key));
+                paired = true;
             } catch (PhoneKey.Unavailable e) {
                 shown = e.getMessage();
-            } catch (IOException | JSONException | GeneralSecurityException | RuntimeException e) {
-                PhoneKey.delete();
+            } catch (Exception e) {
                 shown = "That didn't work. Check the address, and that the code is still valid.";
             }
             String result = shown;
+            boolean replaced = paired;
             main.post(() -> {
                 pairMessage.setText(result);
                 codeField.setText("");
+                if (replaced) newPairing();
+                else pairScreen.failed();
                 render();
             });
         }, "walkie-pair").start();
     }
 
-    private void forget() {
+    /** Opens the pairing form. The saved pairing stays until a new one succeeds. */
+    private void pairAgain() {
+        pairScreen.pairAgain();
+        pairMessage.setText("");
+        render();
+    }
+
+    private void cancelPair() {
+        if (pairScreen.cancel()) closePair();
+    }
+
+    private void closePair() {
+        hideKeyboard();
+        addressField.setText("");
+        codeField.setText("");
+        pairMessage.setText("");
+        render();
+    }
+
+    /** The pairing form's fields are the only text fields, so the keyboard goes when the form does. */
+    private void hideKeyboard() {
+        View focused = getCurrentFocus();
+        if (focused != null) {
+            getSystemService(InputMethodManager.class).hideSoftInputFromWindow(focused.getWindowToken(), 0);
+            focused.clearFocus();
+        }
+    }
+
+    /** Back closes the pairing form when there is a pairing to return to. Registered only then, so Back is the system's otherwise. */
+    private final OnBackInvokedCallback closeForm = () -> {
+        if (pairScreen.back(Pairing.host(this) != null)) closePair();
+    };
+    private boolean closeFormRegistered;
+
+    private void watchBack(boolean wanted) {
+        if (wanted == closeFormRegistered) return;
+        closeFormRegistered = wanted;
+        if (wanted) {
+            getOnBackInvokedDispatcher().registerOnBackInvokedCallback(OnBackInvokedDispatcher.PRIORITY_DEFAULT, closeForm);
+        } else {
+            getOnBackInvokedDispatcher().unregisterOnBackInvokedCallback(closeForm);
+        }
+    }
+
+    /** A new pairing has replaced the old one, so whatever ran on the old one is over. */
+    private void newPairing() {
         stopService(new Intent(this, TalkService.class));
         stopBrowse();
-        Pairing.forget(this);
+        pairScreen.paired();
+        hideKeyboard();
         pairingOver = false;
+        TalkService.status.pairingOver = false;
         picked = null;
         message = null;
-        render();
     }
 
     private void toggle() {
@@ -435,7 +494,7 @@ public class MainActivity extends Activity {
     private void fingerprint(String title, String description, String words, Signed then, Runnable cancelled) {
         Signature signer;
         try {
-            signer = PhoneKey.signer();
+            signer = PhoneKey.signer(Pairing.keySlot(this));
         } catch (GeneralSecurityException | IOException e) {
             Log.e(TAG, "the key won't sign", e);
             message = e instanceof KeyPermanentlyInvalidatedException || e instanceof KeyExpiredException
@@ -513,9 +572,14 @@ public class MainActivity extends Activity {
         String host = Pairing.host(this);
         TalkService.Status status = TalkService.status;
         boolean paired = host != null;
-        pairSection.setVisibility(paired ? View.GONE : View.VISIBLE);
-        talkSection.setVisibility(paired ? View.VISIBLE : View.GONE);
-        pairedSection.setVisibility(paired ? View.VISIBLE : View.GONE);
+        boolean form = pairScreen.formShown(paired);
+        pairSection.setVisibility(form ? View.VISIBLE : View.GONE);
+        cancelPairButton.setVisibility(pairScreen.cancelShown(paired) ? View.VISIBLE : View.GONE);
+        pairButton.setEnabled(pairScreen.idle());
+        cancelPairButton.setEnabled(pairScreen.idle());
+        watchBack(pairScreen.cancelShown(paired));
+        talkSection.setVisibility(paired && !form ? View.VISIBLE : View.GONE);
+        pairedSection.setVisibility(paired && !form ? View.VISIBLE : View.GONE);
         confirmSection.setVisibility(status.running && status.confirm != null ? View.VISIBLE : View.GONE);
         if (!paired) {
             stopBrowse();
