@@ -1,5 +1,5 @@
 #!/bin/bash
-# Downloads the three speech models, checks each against its pinned SHA-256, and unpacks them.
+# Downloads the speech models and the speaker model, checks each against its pinned SHA-256, and unpacks them.
 # Takes about 1 GB, and needs about 2 GB free while downloading. Models go to $WALKIE_TALKIE_MODELS, by default ~/.local/share/walkie-talkie/models.
 set -euo pipefail
 
@@ -44,5 +44,9 @@ if [ ! -d "$MODELS/$KOKORO" ]; then
     912804855a04745fa77a30be545b3f9a5d15c4d66db00b88cbcd4921df605ac7 "$KOKORO.tar.bz2"
   unpack "$KOKORO.tar.bz2" "$KOKORO"
 fi
+
+# 3D-Speaker's CAM++, for the speaker check. The release can be uploaded again, so the pin matters.
+fetch "$BASE/speaker-recongition-models/3dspeaker_speech_campplus_sv_en_voxceleb_16k.onnx" \
+  98daf9bcf1c8abf3db374fec4c27a5eda7c58705bb3f180d057b085a72a88bb5 3dspeaker_speech_campplus_sv_en_voxceleb_16k.onnx
 
 echo "Models are ready in $MODELS"

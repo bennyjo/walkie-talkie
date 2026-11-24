@@ -17,6 +17,7 @@ the words after it, and the same goes for what's said past the two-minute limit.
 
 Transcription starts before the silence is up, so the wait pays for only part of it.
 A message ends only with a transcript in hand, and noise never reaches the conversation.
+The speaker check, when there is one, scores the same audio at the same time.
 """
 import asyncio
 import collections
@@ -77,11 +78,14 @@ def speaking_level(levels):
 
 
 class TurnDetector:
-    """Feed it 16 kHz mono samples. It calls on_turn(text, last_voice_time, longest_pause) once per message."""
+    """Feed it 16 kHz mono samples. It calls on_turn(text, last_voice_time, longest_pause, voice_score,
+    speech_seconds) once per message. voice_score is None without a speaker check, or if it failed."""
 
-    def __init__(self, is_speech, transcribe, on_turn, clock=time.monotonic, on_missed_start=lambda: None):
+    def __init__(self, is_speech, transcribe, on_turn, clock=time.monotonic, on_missed_start=lambda: None,
+                 score_voice=None):
         self.is_speech = is_speech      # one window (int16) -> bool
         self.transcribe = transcribe    # audio (int16) -> awaitable text
+        self.score_voice = score_voice  # audio (int16) -> awaitable score, or None
         self.on_turn = on_turn
         self.clock = clock
         self.on_missed_start = on_missed_start  # someone's talking, and their words won't count
@@ -220,9 +224,15 @@ class TurnDetector:
                 self._next_message()
             return
         if (too_long or quiet >= self._transcribe_at()) and self.attempt is None:
-            self.attempt = asyncio.ensure_future(self.transcribe(np.concatenate(self.audio[:self.spoken + CARRIED_TAIL])))
+            self.attempt = asyncio.ensure_future(self._hear(np.concatenate(self.audio[:self.spoken + CARRIED_TAIL])))
             self.attempt_at = self.clock()
         self._maybe_finish(quiet, too_long)
+
+    async def _hear(self, audio):
+        """The words, and how close the voice is to the owner's, worked out side by side."""
+        if self.score_voice is None:
+            return await self.transcribe(audio), None
+        return tuple(await asyncio.gather(self.transcribe(audio), self.score_voice(audio)))
 
     def _carry_on(self):
         """Talking again, so whatever silence came before was only a pause."""
@@ -246,14 +256,15 @@ class TurnDetector:
         if self.attempt.cancelled() or self.attempt.exception():
             self._next_message()
             return
-        text = self.attempt.result()
+        text, score = self.attempt.result()
         if trails_off(text) and kind(text) == "prompt" and quiet < THINKING_HOLD and not too_long:
             return
         last_voice, longest_pause = self.last_voice, self.longest_pause
         self.finished_marks = {"speech_detected": self.detected_at, "transcribe_start": self.attempt_at}
         self.finished_level = speaking_level(self.speech_levels)
+        speech_seconds = len(self.speech_levels) * SECONDS
         self._next_message()
-        self.on_turn(text, last_voice, longest_pause)
+        self.on_turn(text, last_voice, longest_pause, score, speech_seconds)
 
     def _next_message(self):
         held = self.held

@@ -1,6 +1,6 @@
 # Use Walkie Talkie
 
-This page covers a call from Start to Stop, switching sessions, pausing, how the gateway decides a message has ended, the timing log, how it talks, and troubleshooting.
+This page covers a call from Start to Stop, switching sessions, pausing, the speaker check, how the gateway decides a message has ended, the timing log, how it talks, and troubleshooting.
 
 ## Start a call
 
@@ -29,6 +29,7 @@ Every Start takes a fingerprint, and the fingerprint lets the phone talk to that
 | Hear "hasn't started that" | The session has your message, but hasn't started it after 10 seconds. A dialog may be open at the keyboard. It runs when the dialog closes, unless you tap or stop the app |
 | Hear "stopped at the keyboard" | Someone pressed Esc in that session, so it refuses spoken prompts. Say **type it** within 30 seconds to send that message through the session's own prompt box. Over the notice, a lone "type it" is too short to count, so say "yes, type that", or wait for the notice to end. Messages queued after it are dropped, and you hear that they were. This works only in herdr or tmux. In a plain terminal, you hear that it can't reach the terminal |
 | Hear "asking for a permission" | The session needs an answer at the keyboard. Tap to stop the turn |
+| Hear the warning tone, then "Didn't catch your voice. Say it again." | The [speaker check](#listen-only-to-your-voice) refused the message, so it didn't reach the session. Say it again, with a little more if it was a single word |
 
 While a reply plays or you speak, the phone lowers other audio, such as music, so you hear the voice over it. The audio comes back to full volume about two seconds after both stop.
 
@@ -98,6 +99,67 @@ uv run --project gateway walkie-gateway serve --no-heard
 ```
 
 You still hear "It's in the queue." for a busy session, and why a message didn't reach the session. No app update is needed.
+
+## Listen only to your voice
+
+The gateway can check that each message sounds like you, and drop one that doesn't. It's a filter, not a lock. It keeps out a bystander, a shop, a radio, a video, or someone who has your phone and talks in their own voice. It doesn't stop a recording of your voice, a software copy of it, or a voice close enough to yours.
+
+It's off until you enroll your voice. Then it starts in shadow mode, which logs how each message scores and refuses nothing. After a week of walks, set the thresholds from your own scores, and turn on enforcing.
+
+### Enroll your voice
+
+Plug the collar mic's receiver into the Mac, clip the mic on as you wear it on a walk, and run:
+
+```sh
+gateway/fetch-models.sh
+uv run --project gateway walkie-gateway enroll
+```
+
+The first command downloads the speaker model, if you set up before the gateway had one. The second lists the Mac's audio inputs, so you can choose the receiver, and then shows six short parts to read, one at a time: press Enter, read the part, and press Enter. It takes about two minutes. macOS asks once to let the terminal use the microphone. A part that's too short, silent, or unlike the others is read again.
+
+The six parts make one voiceprint, which is saved in the gateway's state folder, readable only by you, with the speaker model's checksum. The recordings stay in memory, and they're gone when the command ends. The voiceprint never goes to the phone or a session, and revoking the phone leaves it alone. Restart the gateway to use it.
+
+Enroll again to replace the voiceprint after a new collar mic, a long cold, or if your scores drift lower: a median below about 0.6 for messages of 3 seconds or more. To delete it, run `walkie-gateway enroll --remove`. With no voiceprint, the gateway checks nothing, and it logs `speaker check off` when it starts.
+
+### What's checked
+
+| What you say | Checked |
+| --- | --- |
+| A message to the session, a yes to a read-back, "type it", or "go" while listening | Yes |
+| "cancel", "no", "pause", or "hang up" | No. They only stop or decline, so they work in any wind |
+| "go", "play", or "start" while paused | No. Every message after it is checked |
+| A switch to another session | No. The fingerprint in the app decides |
+| Talking over a reply | No. It only stops the reply, and the words are checked when the message ends |
+
+A message's score is how close its voice is to the voiceprint, from -1 to 1. Short speech scores lower for everyone, so the score a message needs depends on how much speech it holds: 0.35 under 1.5 seconds, 0.42 under 3 seconds, and 0.50 from 3 seconds. In lab tests with 40 recorded speakers through the phone's audio link, these thresholds let through about 1% of other people's messages, but more from someone whose voice is close to yours. A single word is hard to judge: expect a quarter to a third of a lone "yes" or "type it" to be refused, more in wind. A longer answer, such as "yes, go ahead and push it", is refused far less often.
+
+A refused message gets the warning tone and "Didn't catch your voice. Say it again." Nothing reaches the session, and a yes or "type it" that was waiting still waits, so say it again. Nothing locks after many refusals.
+
+### Read your scores
+
+Each message logs one `speaker` line, with no words, except "hang up" and what you say while paused:
+
+```text
+speaker {"kind": "prompt", "score": 0.614, "seconds": 2.41, "threshold": 0.42, "outcome": "pass"}
+```
+
+`kind` is what the message was, such as `prompt`, `yes`, or `switch`. `seconds` is how much speech it held. `outcome` is `pass`, `would-refuse` in shadow mode, `refused` when enforcing, or `unchecked`. A `score` of `null` means the check failed, which counts as a fail.
+
+The gateway logs to its terminal's standard error. To keep a week of lines, start it with `2>> ~/walkie-gateway.log`. Then summarize them:
+
+```sh
+uv run --project gateway python gateway/tools/speaker_scores.py ~/walkie-gateway.log
+```
+
+For each length of speech, it prints how many messages were scored, their median, and the share each threshold would have refused. For each threshold, pick the highest that refuses about 2% or less of your messages of 2 seconds or more. Going lower than the defaults lets more strangers through. For speech under 1.5 seconds, expect a higher share, and keep 0.35 unless your scores are much lower. Other people's speech the mic heard is in the log too, and it scores low, so a few low scores may not be yours.
+
+### Enforce
+
+```sh
+uv run --project gateway walkie-gateway serve --enforce-speaker --speaker-thresholds 0.35,0.42,0.50
+```
+
+`--speaker-thresholds` takes the three thresholds, shortest speech first, and without it the defaults apply. The gateway won't start with `--enforce-speaker` and no voiceprint. No app update is needed.
 
 ## End a call
 

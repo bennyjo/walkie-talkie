@@ -114,7 +114,7 @@ A live session can do anything you can do at its keyboard, so getting into one s
 **Once you're in.** These are the limits. Read them before you rely on this.
 
 - **Your voice has your keyboard's authority.** A spoken prompt does whatever a typed one would in that session, tools included. In a session that runs without permission prompts, that's everything. Connect the sessions you'd hand a keyboard to.
-- **The mic can't tell who's speaking.** It's live, with no wake word. Anyone close enough can become a prompt. Say "pause", or stop the app, when you talk to someone else.
+- **The mic can't tell who's speaking.** It's live, with no wake word. Anyone close enough can become a prompt. You can [enroll your voice](docs/usage.md#listen-only-to-your-voice) so the gateway drops messages that don't sound like you, but it only logs scores until you turn on enforcing, and even then it's a filter, not a lock: it doesn't stop a recording of your voice, or a voice close to yours. Say "pause", or stop the app, when you talk to someone else.
 - **A phone taken during a call** can talk to that one session only while your earbuds stay connected. The call ends at once when they disconnect, including when their battery runs out. A thief who stays within radio range of your earbuds can keep talking until you say "hang up", for up to four hours. It can't start another call or switch sessions.
 - **A spoken yes is not a lock.** Only the fingerprint confirmation at a front desk is, and the session that receives it still acts by reading a note.
 - **A compromised Tailscale account** could put a device between the phone and the Mac. It could see that a call is on, and how much is said, and cut it, but it couldn't read a call, add to it, or start one without the token and your fingerprint. Use two-factor sign-in for Tailscale.
@@ -144,7 +144,7 @@ Early: version 0.1.0.
 | Page | What's in it |
 | --- | --- |
 | [Set up](docs/setup.md) | Every setup step, updating the mod, and keeping folders off the phone |
-| [Use it](docs/usage.md) | What happens when you talk, pause, tap, or go quiet, switching sessions, how a message ends, timings, how it talks, and troubleshooting |
+| [Use it](docs/usage.md) | What happens when you talk, pause, tap, or go quiet, switching sessions, the speaker check, how a message ends, timings, how it talks, and troubleshooting |
 | [Front desk](docs/front-desk.md) | A small session that answers while your main session is busy, and the fingerprint confirmation for irreversible actions |
 | [Security](docs/security.md) | The full security model and its limits |
 | [Develop](docs/develop.md) | Tests, builds, the code map, and testing without a phone |

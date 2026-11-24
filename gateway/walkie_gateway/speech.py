@@ -1,4 +1,5 @@
-"""Local speech: Silero for voice detection, Parakeet to transcribe, Kokoro to speak, Opus to carry it.
+"""Local speech: Silero for voice detection, Parakeet to transcribe, Kokoro to speak, Opus to carry it,
+and CAM++ for the speaker check.
 
 Every model runs on this Mac. Nothing here opens a network connection.
 """
@@ -14,6 +15,7 @@ from .turns import WINDOW
 
 PARAKEET = "sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8"
 KOKORO = "kokoro-en-v0_19"
+SPEAKER_MODEL = "3dspeaker_speech_campplus_sv_en_voxceleb_16k.onnx"
 VOICE_RATE = 24000      # Kokoro's output
 OPUS_FRAME = 480        # 20 ms at the voice's rate
 OPUS_BITRATE = 24000
@@ -174,6 +176,34 @@ class Speech:
         lead = np.zeros(int(max(0.0, gap - TAIL_SECONDS) * VOICE_RATE), dtype=np.float32)
         samples = np.concatenate((lead, samples)) if len(samples) else samples
         return (np.clip(samples, -1.0, 1.0) * 32767).astype(np.int16)
+
+
+class SpeakerCheck:
+    """3D-Speaker's CAM++: a voiceprint of some speech, and how close it is to the owner's.
+
+    The score is the cosine of the two voiceprints. A call blocks for about 0.16 s per 10 s of
+    audio on one thread, so run it in its own worker.
+    """
+
+    def __init__(self, models_dir, voiceprint=None):
+        path = os.path.join(models_dir, SPEAKER_MODEL)
+        if not os.path.exists(path):
+            raise FileNotFoundError(
+                "Missing %s. Run gateway/fetch-models.sh, which downloads the speaker model." % path)
+        self.extractor = sherpa_onnx.SpeakerEmbeddingExtractor(
+            sherpa_onnx.SpeakerEmbeddingExtractorConfig(model=path, num_threads=1))
+        self.voiceprint = voiceprint
+
+    def embed(self, samples):
+        """A unit-length voiceprint of int16 samples at the microphone's rate."""
+        stream = self.extractor.create_stream()
+        stream.accept_waveform(MIC_RATE, samples.astype(np.float32) / 32768.0)
+        stream.input_finished()
+        vector = np.asarray(self.extractor.compute(stream), dtype=np.float32)
+        return vector / (np.linalg.norm(vector) or 1.0)
+
+    def score(self, samples):
+        return float(self.embed(samples) @ self.voiceprint)
 
 
 class VoiceDetector:
