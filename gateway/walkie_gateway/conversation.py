@@ -141,10 +141,10 @@ class Notice(str):
 
 NOTICE_TONE = object()  # in the frames, where the phone plays the notice tone
 
-NO_SESSION = Notice("no-session", "No session is connected. Choose one in the app, and tap Start.")
-SESSION_GONE = Notice("session-gone", "That session has gone. Choose another in the app, and tap Start.")
-CONNECTED = "Connected to %s."  # never logged: it holds a folder's name
-SESSION_CLOSED = Notice("session-closed", "That session ended the call. Tap Start in the app to connect again.")
+NO_SESSION = Notice("no-session", "No session is connected. Tap one in the app.")
+SESSION_GONE = Notice("session-gone", "That session has gone. Tap another in the app.")
+CONNECTED = "You're talking to %s."  # never logged: it holds a folder's name
+SESSION_CLOSED = Notice("session-closed", "That session ended the call. Tap it in the app to connect again.")
 IDLE_ENDED = Notice("idle-ended", "Nothing was said for 30 minutes, so I ended the call.")
 HUNG_UP = Notice("hung-up", "Hanging up.")
 VOICE_REFUSED = Notice("voice-refused", "Didn't catch your voice. Say it again.")

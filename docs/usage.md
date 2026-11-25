@@ -1,15 +1,15 @@
 # Use Walkie Talkie
 
-This page covers a call from Start to Stop, switching sessions, pausing, the speaker check, how the gateway decides a message has ended, the timing log, how it talks, and troubleshooting.
+This page covers a call from start to end, switching sessions, pausing, the speaker check, how the gateway decides a message has ended, the timing log, how it talks, and troubleshooting.
 
 ## Start a call
 
 1. Plug in the receiver, and connect the earbuds.
-1. Open the app. It lists the live sessions in groups, one for each Claude Code login, under a heading such as **Work account** or **Personal account**. Within a group, the session with the latest prompt comes first. Each row shows the session's name, and under it where the folder is, when the session last took a prompt, and a short ID. A session goes by its folder's name, except in a Firstmate secondmate home, which goes by the secondmate it declares, such as "secondmate walkie". The main Firstmate goes by its folder's name, "firstmate". The app, the fingerprint prompt, and what you hear all name the session the same way, with its account, such as "secondmate walkie on the personal account". To name a login, see [Name each account](setup.md#name-each-account). Choose a session.
-1. Tap **Start**, allow the microphone and notifications the first time, and touch the fingerprint sensor. The prompt names the session you chose. You hear "Connected to" and its name.
+1. Open the app. It lists the live sessions in groups, one for each Claude Code login, under a heading such as **Work account** or **Personal account**. Within a group, the session with the latest prompt comes first. Each session is a card with its name, and under it where the folder is and when the session last took a prompt. When two sessions look the same, their cards add a short ID. A session goes by its folder's name, except in a Firstmate secondmate home, which goes by the secondmate it declares, such as "secondmate walkie". The main Firstmate goes by its folder's name, "firstmate". The app, the fingerprint prompt, and what you hear all name the session the same way, with its account, such as "secondmate walkie on the personal account". To name a login, see [Name each account](setup.md#name-each-account).
+1. Tap the session you want to talk to, allow the microphone and notifications the first time, and touch the fingerprint sensor. The prompt names the session you tapped. You hear "You're talking to" and its name, and the app shows it under **Talking to**.
 1. Lock the phone, and talk.
 
-Every Start takes a fingerprint, and the fingerprint lets the phone talk to that one session for that one call. To talk to another session, [switch](#switch-sessions): choose it in the app, or say **switch session**.
+Every call takes a fingerprint, and the fingerprint lets the phone talk to that one session for that one call. To talk to another session, [switch](#switch-sessions): tap it in the app, or say **switch session**.
 
 | You | What happens |
 | --- | --- |
@@ -37,23 +37,23 @@ While a reply plays or you speak, the phone lowers other audio, such as music, s
 
 You can move the call to another session without stopping it, in the app or by voice. The mod must run in that session too, so it's in the app's list. Sessions on different logins work the same way, so you can switch between a session on your work login and one on your personal login.
 
-Like Start, a switch takes your fingerprint, and the fingerprint signs that one session. The session you leave is let go as at **Stop**: messages still in its queue are dropped, and you hear that they were. A turn already running there carries on, and nobody hears its reply.
+Like starting a call, a switch takes your fingerprint, and the fingerprint signs that one session. The session you leave is let go as at **End call**: messages still in its queue are dropped, and you hear that they were. A turn already running there carries on, and nobody hears its reply.
 
 ### In the app
 
-During a call, the app lists the sessions, with the one you're talking to selected.
+During a call, the app shows the session you're talking to at the top, and the other sessions under **Switch to**.
 
-1. Choose another session. The fingerprint prompt names it.
+1. Tap another session. Its card says "Switching", and the fingerprint prompt names it.
 1. Touch the sensor.
-1. You hear "Connected to" and its name. The list selects it, and the top of the screen says "Talking to" and its name.
+1. You hear "You're talking to" and its name. Only once the gateway has moved the call does the top of the screen name the new session, with a note that says "Now talking to" and its name.
 
-If you cancel the fingerprint, you hear "Not switched" and the name of the session you're still talking to. A switch in the app needs the gateway from the same version as the app. With an older gateway, the screen says the call didn't move.
+If you cancel the fingerprint, nothing moves: you hear "Not switched" and the name of the session you're still talking to, and a note in the app says the same. A switch in the app needs the gateway from the same version as the app. With an older gateway, the screen says the call didn't move.
 
 ### By voice
 
 1. Say **switch session** to go to the only other session, or **switch to** and the session's name, with or without its account, such as "switch to secondmate walkie" or "switch to firstmate personal".
-1. You hear "To switch to" and the session's name, and a notification says something is waiting for your fingerprint. Open the app: it asks "Switch to" and the name. Tap **Confirm** and touch the sensor, or tap **Not now**.
-1. You hear "Connected to" and the name of the session you're now talking to.
+1. You hear "To switch to" and the session's name, and a notification says something is waiting for your fingerprint. Open the app: it asks "Switch to" and the name. Tap **Confirm with fingerprint** and touch the sensor, or tap **Not now**.
+1. You hear "You're talking to" and the name of the session you're now talking to.
 
 A spoken switch alone moves nothing.
 
@@ -163,9 +163,9 @@ uv run --project gateway walkie-gateway serve --enforce-speaker --speaker-thresh
 
 ## End a call
 
-To stop, tap **Stop** in the app or in its notification. The session is released: it drops the voice rules, stops sending replies to the gateway, and drops any messages still in the queue. A message it has taken but hasn't started, such as one behind a dialog, stops as it starts. A turn already running carries on, and nobody hears its reply, so tap first to stop it.
+To end a call, tap **End call** in the app, or **Stop** in its notification. The session is released: it drops the voice rules, stops sending replies to the gateway, and drops any messages still in the queue. A message it has taken but hasn't started, such as one behind a dialog, stops as it starts. A turn already running carries on, and nobody hears its reply, so tap first to stop it.
 
-A call also ends, and the next Start takes a new fingerprint, when:
+A call also ends, and the next call takes a new fingerprint, when:
 
 | What happens | What you notice |
 | --- | --- |
@@ -174,8 +174,8 @@ A call also ends, and the next Start takes a new fingerprint, when:
 | Nothing is said or heard for 30 minutes. A reply that's still coming counts as something | You hear "Nothing was said for 30 minutes, so I ended the call," then the warning tone |
 | The phone has been out of reach for 2 minutes | When the phone is back, you hear the warning tone, and the app says the call ended while the phone was away |
 | The session ends, or someone types `/clear` in it | You hear that the session has gone or ended the call |
-| The gateway restarts or stops answering the session, or the mod reloads | The warning tone. The app says to tap **Start** again |
-| You tap **Stop** with no signal | The phone can't tell the Mac, so the gateway ends the call once it has been without the phone for 2 minutes. Until then the session still shows **Walkie-talkie on** |
+| The gateway restarts or stops answering the session, or the mod reloads | The warning tone. The app says to tap a session to connect again |
+| You end the call with no signal | The phone can't tell the Mac, so the gateway ends the call once it has been without the phone for 2 minutes. Until then the session still shows **Walkie-talkie on** |
 | Four hours pass | The app stops by itself, so a forgotten microphone can't run on |
 
 A shorter drop in the connection keeps the call, and the phone carries on where it was.
@@ -200,7 +200,7 @@ The app's screen shows the routes, which mic channels carry sound, the round tri
 
 ## Voices
 
-Pick a voice under **Voice** in the app, once you've tapped **Start**. All of them come with the Kokoro model, the gateway remembers your choice in its state folder, and it takes effect from the next reply.
+During a call, tap **Voice** in the app to pick a voice. All of them come with the Kokoro model, the gateway remembers your choice in its state folder, and it takes effect from the next reply.
 
 The gateway's own notices, such as "Paused." or "It's in the queue.", always speak in Michael's American voice, after a short rising tone from the phone. Replies can't use that voice, so you can always tell a notice from a reply that says the same words. If you'd chosen Michael before, replies go back to the default voice.
 
@@ -256,12 +256,12 @@ You can also ask by voice. Say something like "talk slower from now on" or "keep
 | No sessions in the app | No session has the mod running. Type `/reload-plugins` in a session that started before the install. If it says `0 plugins`, run the install for that session's login. A session in a denied folder, on a login the install didn't name, or in an orchestrated worker never shows. `0 hooks` in that line is normal |
 | The fingerprint prompt says the key has gone | A fingerprint was added to the phone, or the pairing is over 30 days old. Tap **Pair again** |
 | The app says "The key won't sign" or "The fingerprint didn't unlock the key", then an error | The phone's key store refused the key. The error after the message names the exception and its causes. The full trace is in `adb logcat -s walkie` |
-| The app says "That session changed a moment ago" | Its list was a moment out of date. Tap **Start** again |
+| The app says "That session changed a moment ago" | Its list was a moment out of date. Tap the session again |
 | "Which session?" names the same session twice | Two sessions have the same name on one login, such as two copies of one repository, or on logins that both go unnamed because their paths or names hold a denied name. Switch with **switch session** if they're the only two, or choose the session in the app by where the folder is |
 | **front-desk** isn't in the app's list | The launcher isn't running, it ran in a stripped environment, such as `env -i`, where Claude Code doesn't load mods, or its `CLAUDE_CONFIG_DIR` isn't a login you installed for. Start it from your usual shell |
 | `A front desk is already running` | Another launcher holds this state folder. Stop that one first |
 | "Connect your USB mic" | The input route isn't USB. With Advanced Protection on, connect the mic before you lock the phone |
 | Your words aren't picked up | Read **Mic level** in the app while you talk. Speech needs to reach about -45 dB, and 12 dB over the background. If it's lower, raise the mic's gain, or turn off its noise cancelling |
-| A reply doesn't stop when you talk over it | Keep talking for about a second, as loud as your last message. Your voice also has to beat **earbud leak** in the app by about 8 dB. If you've just spoken much closer to the mic, say something first in your normal voice. Otherwise, lower the volume, or tap |
+| A reply doesn't stop when you talk over it | Keep talking for about a second, as loud as your last message. Your voice also has to beat **Earbud leak**, under **Audio details** in the app, by about 8 dB. If you've just spoken much closer to the mic, say something first in your normal voice. Otherwise, lower the volume, or tap |
 | A reply keeps pausing for a moment or cuts off on its own, or a stray message reaches the session | Loud leak or a noisy place. The app learns the leak as replies play, but it can take a dozen pauses in the first reply after it starts. An echo that lasts past about half a second usually teaches it nothing, and neither does one about as loud as your last message. The exception is a talk-over of four words or fewer that cuts the reply and repeats what just played: it teaches the leak even at that level, and even if it was you. Until you've spoken once since the gateway started, any shorter speech counts as leak, even your own voice. If it goes on, lower the volume |
 | The earbud tap pauses music instead | Another media app took the tap. Close it, and tap again |

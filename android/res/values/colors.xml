@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The app's colour tokens. values-night holds the dark set under the same names. -->
+<resources>
+  <color name="bg">#FFF5F3EC</color>          <!-- warm ivory page -->
+  <color name="surface">#FFFDFCF9</color>     <!-- cards -->
+  <color name="surface_muted">#FFECE9E0</color>
+  <color name="outline">#FFE2DED3</color>
+  <color name="text">#FF1F1E1B</color>
+  <color name="text_muted">#FF66625A</color>
+  <color name="accent">#FFB05230</color>      <!-- clay: fills, with on_accent text -->
+  <color name="accent_text">#FFA84E2D</color> <!-- clay for text and icons on the page -->
+  <color name="on_accent">#FFFFFFFF</color>
+  <color name="danger">#FFB42318</color>
+  <color name="danger_soft">#FFFBE9E5</color>
+  <color name="live">#FF4F6B3F</color>        <!-- sage: a call is live -->
+</resources>

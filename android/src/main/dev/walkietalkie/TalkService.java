@@ -34,7 +34,7 @@ import org.json.JSONObject;
  * Android kills it, for the same reason, so it's not sticky: a tap on the app brings it back.
  *
  * It starts only with a fingerprint's signature for one session, and it stops for good when the
- * gateway ends that run. The next Start takes a new fingerprint, like a banking app's next login.
+ * gateway ends that run. The next call takes a new fingerprint, like a banking app's next login.
  * A switch to another session, spoken or tapped in the app's list, keeps the run, and takes a
  * fingerprint in the app too.
  */
@@ -88,6 +88,9 @@ public class TalkService extends Service implements GatewayLink.Listener, Speake
         volatile int pairingDays = -1;
         volatile JSONObject confirm; // a read-back waiting for a fingerprint, or null
         volatile boolean pairingOver; // the Mac wants this phone to pair again
+        volatile boolean replying;   // a reply is sounding in the earbuds
+        volatile boolean hearing;    // the mic hears someone speak
+        volatile String problem;     // what stops the call from working, such as no USB mic, or null
     }
 
     static final Status status = new Status();
@@ -117,7 +120,7 @@ public class TalkService extends Service implements GatewayLink.Listener, Speake
             for (int i = 0; i < devices.length; i++) types[i] = devices[i].getType();
             if (started && !Variant.anyRoute(TalkService.this) && EarbudRoutes.anyEarbuds(types)) {
                 Log.i(TAG, "the earbuds are gone, so the call ends");
-                hangUp("The earbuds disconnected, so the call ended. Tap Start to connect again");
+                hangUp("The earbuds disconnected, so the call ended. Tap a session to connect again");
                 return;
             }
             applyRoutes();
@@ -236,6 +239,9 @@ public class TalkService extends Service implements GatewayLink.Listener, Speake
         status.connected = false;
         status.confirm = null;
         status.run = null;
+        status.replying = false;
+        status.hearing = false;
+        status.problem = null;
         getSystemService(NotificationManager.class).cancel(CONFIRM_NOTIFICATION);
         if (mic != null) mic.stop();
         if (speaker != null) speaker.stop();
@@ -330,6 +336,7 @@ public class TalkService extends Service implements GatewayLink.Listener, Speake
         } else {
             text = link.connected() ? "Listening on the USB mic" : "Connecting to the Mac";
         }
+        status.problem = micOk && !silenced && soundOk ? null : text;
         if (!text.equals(shownText)) {
             shownText = text;
             getSystemService(NotificationManager.class).notify(NOTIFICATION, notification(text));
@@ -356,6 +363,7 @@ public class TalkService extends Service implements GatewayLink.Listener, Speake
                 PendingIntent.FLAG_IMMUTABLE);
         return new Notification.Builder(this, CHANNEL)
                 .setSmallIcon(R.drawable.ic_notification)
+                .setColor(getColor(R.color.accent))
                 .setContentTitle("Walkie Talkie")
                 .setContentText(text)
                 .setContentIntent(open)
@@ -480,28 +488,28 @@ public class TalkService extends Service implements GatewayLink.Listener, Speake
     private static String refusedText(String why) {
         switch (why) {
             case "gone":
-                return "That session has gone. Choose another, and tap Start";
+                return "That session has gone. Choose another";
             case "late":
-                return "That took too long. Tap Start again";
+                return "That took too long. Tap the session again";
             case "changed":
-                return "That session changed a moment ago. Tap Start again";
+                return "That session changed a moment ago. Tap it again";
             case "signature":
                 return "Your Mac didn't accept this phone's fingerprint. Pair again";
             default:
-                return "The call ended while the phone was away. Tap Start to connect again";
+                return "The call ended while the phone was away. Tap a session to connect again";
         }
     }
 
     private static String endedText(String why) {
         switch (why) {
             case "idle":
-                return "Ended after 30 minutes with nothing said. Tap Start to connect again";
+                return "Ended after 30 minutes with nothing said. Tap a session to connect again";
             case "gone":
-                return "That session has gone. Choose another, and tap Start";
+                return "That session has gone. Choose another";
             case "closed":
-                return "That session ended the call. Tap Start to connect again";
+                return "That session ended the call. Tap a session to connect again";
             default:
-                return "The call ended. Tap Start to connect again";
+                return "The call ended. Tap a session to connect again";
         }
     }
 
@@ -536,6 +544,7 @@ public class TalkService extends Service implements GatewayLink.Listener, Speake
         PendingIntent open = PendingIntent.getActivity(this, 2, new Intent(this, MainActivity.class), PendingIntent.FLAG_IMMUTABLE);
         nm.notify(CONFIRM_NOTIFICATION, new Notification.Builder(this, CONFIRM_CHANNEL)
                 .setSmallIcon(R.drawable.ic_notification)
+                .setColor(getColor(R.color.accent))
                 .setContentTitle("Walkie Talkie")
                 .setContentText("Something waits for your fingerprint.")
                 .setVisibility(Notification.VISIBILITY_PRIVATE)
@@ -572,10 +581,12 @@ public class TalkService extends Service implements GatewayLink.Listener, Speake
     }
 
     @Override public void onSounding(boolean sounding) {
+        status.replying = sounding;
         ducker.setReply(sounding);
     }
 
     @Override public void onSpeaking(boolean speaking) {
+        status.hearing = speaking;
         ducker.setSpeech(speaking);
     }
 
