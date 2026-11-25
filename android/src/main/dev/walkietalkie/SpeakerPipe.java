@@ -314,7 +314,8 @@ final class SpeakerPipe implements Runnable {
             }
             if (held && SystemClock.elapsedRealtime() - heldAt > MAX_HOLD_MS) held = false;
             if (samples != null) {
-                own.playing(SystemClock.elapsedRealtime(), samples.length * 1000L / RATE);
+                boolean spoken = samples != tapTone && samples != warnTone;
+                own.playing(SystemClock.elapsedRealtime(), samples.length * 1000L / RATE, spoken, routedType());
             } else {
                 samples = held ? null : speech.poll();
                 if (samples == null) {
