@@ -38,12 +38,13 @@ final class SpeakerPipe implements Runnable {
     private static final int BUFFER_BYTES = RATE / 5; // 100 ms of 16-bit mono
     private static final long CODEC_WAIT_US = 5000;
     private static final short[] SILENCE = new short[FRAME_SAMPLES];
-    private static final long SOUNDING_TAIL_MS = 500;   // what's written can reach the earbuds this much later
+    private static final long SOUNDING_TAIL_MS = OwnSound.TAIL_MS;
     private static final long MAX_HOLD_MS = 8000;       // if the gateway never answers a hold
 
     private final Listener listener;
     private final ConcurrentLinkedQueue<short[]> speech = new ConcurrentLinkedQueue<>();
     private final ConcurrentLinkedQueue<short[]> tones = new ConcurrentLinkedQueue<>();
+    private final OwnSound own = new OwnSound();
     private volatile boolean running;
     private volatile boolean flushRequested;
     private volatile int dropBelow;
@@ -234,6 +235,11 @@ final class SpeakerPipe implements Runnable {
         return !held && SystemClock.elapsedRealtime() - lastSpeechAt < SOUNDING_TAIL_MS;
     }
 
+    /** The app's own tones and notices, which the mic must not send. */
+    OwnSound own() {
+        return own;
+    }
+
     /** The gateway restarted, so its generations count from the start again. */
     void resetGenerations() {
         dropBelow = 0;
@@ -298,6 +304,7 @@ final class SpeakerPipe implements Runnable {
         AudioTrack track = this.track;
         boolean wasSilent = true;
         while (running) {
+            short[] samples = tones.poll();
             if (flushRequested) {
                 flushRequested = false;
                 track.pause();
@@ -306,8 +313,9 @@ final class SpeakerPipe implements Runnable {
                 wasSilent = true;
             }
             if (held && SystemClock.elapsedRealtime() - heldAt > MAX_HOLD_MS) held = false;
-            short[] samples = tones.poll();
-            if (samples == null) {
+            if (samples != null) {
+                own.playing(SystemClock.elapsedRealtime(), samples.length * 1000L / RATE);
+            } else {
                 samples = held ? null : speech.poll();
                 if (samples == null) {
                     wasSilent = true;

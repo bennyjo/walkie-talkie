@@ -64,11 +64,13 @@ if [ -n "$RUN_TESTS" ]; then
     src/main/dev/walkietalkie/TalkGate.java src/main/dev/walkietalkie/EarbudRoutes.java test/dev/walkietalkie/TalkGateTest.java \
     src/main/dev/walkietalkie/Ducker.java test/dev/walkietalkie/DuckerTest.java \
     src/main/dev/walkietalkie/PairSwap.java src/main/dev/walkietalkie/PairScreen.java test/dev/walkietalkie/PairSwapTest.java \
-    src/main/dev/walkietalkie/MicChoice.java src/main/dev/walkietalkie/Wav.java test/dev/walkietalkie/MicChoiceTest.java
+    src/main/dev/walkietalkie/MicChoice.java src/main/dev/walkietalkie/Wav.java test/dev/walkietalkie/MicChoiceTest.java \
+    src/main/dev/walkietalkie/OwnSound.java test/dev/walkietalkie/OwnSoundTest.java
   "$JAVA_HOME/bin/java" -ea -cp out/test dev.walkietalkie.TalkGateTest
   "$JAVA_HOME/bin/java" -ea -cp out/test dev.walkietalkie.DuckerTest
   "$JAVA_HOME/bin/java" -ea -cp out/test dev.walkietalkie.PairSwapTest
   "$JAVA_HOME/bin/java" -ea -cp out/test dev.walkietalkie.MicChoiceTest
+  "$JAVA_HOME/bin/java" -ea -cp out/test dev.walkietalkie.OwnSoundTest
   exit 0
 fi
 BUILD="out/$VARIANT"

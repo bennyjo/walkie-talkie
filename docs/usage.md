@@ -23,7 +23,7 @@ Every call takes a fingerprint, and the fingerprint lets the phone talk to that 
 
 On the phone's speaker, talking over a reply is off, because the mic would hear the reply as a voice. Wait for the reply to end, or tap the circle in the app to stop it, as an earbud tap would. Replies play aloud, so anyone nearby hears them.
 
-When the call can't hear you, or you can't hear its replies, the phone says so. You hear the warning tone and a short sentence, such as "No USB mic, so I can't hear you." or "No headphones, so replies are silent.", on whatever output there is, the phone's speaker included. It plays once for each problem, about three seconds after the call starts or its mic changes. The app and its notification say what to do. The phone says these few fixed sentences in Android's own offline voice, which no session or gateway notice uses. If the phone has no offline English voice, you hear the tone alone.
+When the call can't hear you, or you can't hear its replies, the phone says so. You hear the warning tone and a short sentence, such as "No USB mic, so I can't hear you." or "No headphones, so replies are silent.", on whatever output there is, the phone's speaker included. It plays once for each problem, about three seconds after the call starts or its mic changes. The app and its notification say what to do. The phone says these few fixed sentences in Android's own offline voice, which no session or gateway notice uses. If the phone has no offline English voice, you hear the tone alone. While the phone plays any sound of its own, and for half a second after, the mic sends silence, so its warnings never reach a session as a message.
 
 | You | What happens |
 | --- | --- |

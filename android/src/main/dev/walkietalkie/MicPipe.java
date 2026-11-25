@@ -226,8 +226,10 @@ final class MicPipe implements Runnable {
 
             // With talk-over off, on the phone's speaker, the mic hears the reply far louder than any lesson
             // could teach the gate, so while a reply sounds nothing here counts, as at the gateway.
+            // The phone's own tones and notices go out as silence, and count for nothing here.
+            boolean own = speaker.own().silence(samples, got, SystemClock.elapsedRealtime());
             boolean sounding = speaker.sounding();
-            boolean deaf = !talkOver && sounding;
+            boolean deaf = own || (!talkOver && sounding);
             if (!deaf && gate.feed(samples, got, sounding) && open) listener.onTalkOver();
             listener.onSpeaking(open && !deaf && gate.speaking());
             level = Math.max(level, gate.level());
