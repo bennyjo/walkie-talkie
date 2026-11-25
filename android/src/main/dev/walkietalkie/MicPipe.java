@@ -17,8 +17,8 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 
 /**
- * The mic's USB receiver to Opus to the Mac. Sound goes out only while the route is the USB input. It
- * captures both channels and keeps the louder: a receiver with one transmitter can leave the other
+ * The chosen mic to Opus to the Mac. Sound goes out only while the route is the input the mic choice allows.
+ * It captures both channels and keeps the louder: a USB receiver with one transmitter can leave the other
  * silent, and Android's mix down to mono would then halve the voice.
  */
 final class MicPipe implements Runnable {
@@ -48,6 +48,7 @@ final class MicPipe implements Runnable {
     private volatile int channels;
     private volatile boolean running;
     private volatile boolean open;
+    private volatile boolean talkOver = true;
     private volatile boolean allZeros;
     private volatile AudioRecord record;
     private Thread thread;
@@ -59,20 +60,25 @@ final class MicPipe implements Runnable {
         this.listener = listener;
     }
 
-    void start(AudioDeviceInfo usb) {
+    /**
+     * With call true, the mic is a call's: the headphones' own, which call mode routes. Otherwise it's
+     * VOICE_RECOGNITION from the preferred input. VOICE_COMMUNICATION belongs with call mode, which drops
+     * Bluetooth headphones to call quality, so only the headphones' mic uses it.
+     */
+    void start(boolean call, AudioDeviceInfo input) {
         running = true;
         AudioRecord r = null;
         try {
-            // VOICE_RECOGNITION, never VOICE_COMMUNICATION: call mode would tie the mic to the earbuds.
             r = new AudioRecord.Builder()
-                    .setAudioSource(MediaRecorder.AudioSource.VOICE_RECOGNITION)
+                    .setAudioSource(call ? MediaRecorder.AudioSource.VOICE_COMMUNICATION
+                            : MediaRecorder.AudioSource.VOICE_RECOGNITION)
                     .setAudioFormat(new AudioFormat.Builder().setSampleRate(RATE)
                             .setChannelMask(AudioFormat.CHANNEL_IN_STEREO)
                             .setEncoding(AudioFormat.ENCODING_PCM_16BIT).build())
                     .setBufferSizeInBytes(2 * RATE)
                     .setPrivacySensitive(true)
                     .build();
-            r.setPreferredDevice(usb);
+            r.setPreferredDevice(input);
             r.startRecording();
             record = r;
         } catch (SecurityException | UnsupportedOperationException | IllegalStateException e) {
@@ -95,6 +101,7 @@ final class MicPipe implements Runnable {
             }
         }
         AudioRecord r = record;
+        record = null;
         if (r != null) {
             r.stop();
             r.release();
@@ -106,14 +113,19 @@ final class MicPipe implements Runnable {
         if (r != null) r.addOnRoutingChangedListener(watcher, handler);
     }
 
-    void prefer(AudioDeviceInfo usb) {
+    void prefer(AudioDeviceInfo input) {
         AudioRecord r = record;
-        if (r != null) r.setPreferredDevice(usb);
+        if (r != null) r.setPreferredDevice(input);
     }
 
-    /** Off while the audio route isn't the USB input, so a phone in a pocket can't send its own mic. */
+    /** Off while the route isn't the chosen mic, so a phone in a pocket can't send a mic you didn't choose. */
     void setOpen(boolean open) {
         this.open = open;
+    }
+
+    /** Off while replies play on the phone's speaker, next to the mic, where a reply would be heard as a voice. */
+    void setTalkOver(boolean talkOver) {
+        this.talkOver = talkOver;
     }
 
     int routedType() {
@@ -212,8 +224,12 @@ final class MicPipe implements Runnable {
             zeroFrames = any ? 0 : zeroFrames + 1;
             allZeros = zeroFrames >= ZERO_FRAMES;
 
-            if (gate.feed(samples, got, speaker.sounding()) && open) listener.onTalkOver();
-            listener.onSpeaking(open && gate.speaking());
+            // With talk-over off, on the phone's speaker, the mic hears the reply far louder than any lesson
+            // could teach the gate, so while a reply sounds nothing here counts, as at the gateway.
+            boolean sounding = speaker.sounding();
+            boolean deaf = !talkOver && sounding;
+            if (!deaf && gate.feed(samples, got, sounding) && open) listener.onTalkOver();
+            listener.onSpeaking(open && !deaf && gate.speaking());
             level = Math.max(level, gate.level());
             floor = gate.floor();
             leak = gate.leak();

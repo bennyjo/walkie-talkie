@@ -7,6 +7,7 @@ import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.pm.ServiceInfo;
 import android.media.AudioDeviceCallback;
 import android.media.AudioDeviceInfo;
@@ -24,6 +25,8 @@ import android.os.SystemClock;
 import android.util.Log;
 import android.view.KeyEvent;
 import java.io.IOException;
+import java.util.List;
+import java.util.Objects;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -45,6 +48,8 @@ public class TalkService extends Service implements GatewayLink.Listener, Speake
     static final String ACTION_CONFIRMED = "dev.walkietalkie.CONFIRMED";
     static final String ACTION_DECLINED = "dev.walkietalkie.DECLINED";
     static final String ACTION_SWITCH = "dev.walkietalkie.SWITCH";
+    static final String ACTION_MIC = "dev.walkietalkie.MIC";
+    static final String ACTION_TAP = "dev.walkietalkie.TAP";
     static final String EXTRA_VOICE = "voice";
     static final String EXTRA_RUN = "run";
     static final String EXTRA_APPROVE = "approve";
@@ -62,6 +67,9 @@ public class TalkService extends Service implements GatewayLink.Listener, Speake
     private static final long MAX_RUN_MS = 4 * 60 * 60 * 1000L; // a forgotten microphone stops by itself
     private static final long CHECK_EVERY_MS = 1000;
     private static final long TAP_DEBOUNCE_MS = 300;
+    private static final long ROUTE_SETTLE_MS = 2500; // a headset's call link takes a moment to come up
+    private static final String SETTINGS = "settings";
+    private static final String MIC = "mic";
 
     /** What the screen shows. Written here, read by MainActivity. */
     static final class Status {
@@ -90,7 +98,8 @@ public class TalkService extends Service implements GatewayLink.Listener, Speake
         volatile boolean pairingOver; // the Mac wants this phone to pair again
         volatile boolean replying;   // a reply is sounding in the earbuds
         volatile boolean hearing;    // the mic hears someone speak
-        volatile String problem;     // what stops the call from working, such as no USB mic, or null
+        volatile String problem;     // what stops the call from working, such as no USB mic, as sentences, or null
+        volatile boolean onSpeaker;  // replies play on the phone's speaker, so talking over them is off
     }
 
     static final Status status = new Status();
@@ -103,8 +112,12 @@ public class TalkService extends Service implements GatewayLink.Listener, Speake
     private MicPipe mic;
     private SpeakerPipe speaker;
     private Ducker ducker;
+    private PhoneVoice voice;
     private boolean started;
-    private boolean micProblem;
+    private MicChoice.Plan plan;
+    private boolean inCall;          // this app put Android in call mode, for the headphones' mic
+    private long settleUntil;        // a problem is announced only once the routes have had time to settle
+    private String announced;        // the spoken notice for the problem now, once it has played
     private String shownText = "";
     private long lastTap;
     private String tappedSwitch; // a session tapped in the open app, whose fingerprint needs no notification
@@ -116,9 +129,12 @@ public class TalkService extends Service implements GatewayLink.Listener, Speake
         @Override public void onAudioDevicesRemoved(AudioDeviceInfo[] devices) {
             // Lost earbuds end the call at once, with no wait. A phone taken from the wearer mid-call must not
             // keep working, and a new call needs the fingerprint. Never in the emulator's build, which has no earbuds.
-            int[] types = new int[devices.length];
-            for (int i = 0; i < devices.length; i++) types[i] = devices[i].getType();
-            if (started && !Variant.anyRoute(TalkService.this) && EarbudRoutes.anyEarbuds(types)) {
+            // In call mode, the headphones' call route counts too, and their media route may go while it stays.
+            int[] removed = types(devices);
+            boolean lost = EarbudRoutes.anyEarbuds(removed)
+                    || inCall && MicChoice.first(MicChoice.HEADSET_ROUTES, removed) >= 0;
+            boolean callStays = inCall && MicChoice.first(MicChoice.HEADSET_ROUTES, types(outputs())) >= 0;
+            if (started && !Variant.anyRoute(TalkService.this) && lost && !callStays) {
                 Log.i(TAG, "the earbuds are gone, so the call ends");
                 hangUp("The earbuds disconnected, so the call ended. Tap a session to connect again");
                 return;
@@ -151,6 +167,10 @@ public class TalkService extends Service implements GatewayLink.Listener, Speake
             if (started) chooseVoice(intent.getStringExtra(EXTRA_VOICE));
         } else if (ACTION_SWITCH.equals(action)) {
             if (started) askSwitch(intent.getStringExtra(EXTRA_SESSION));
+        } else if (ACTION_MIC.equals(action)) {
+            if (started) applyRoutes();
+        } else if (ACTION_TAP.equals(action)) {
+            if (started) tapped();
         } else if (ACTION_CONFIRMED.equals(action) || ACTION_DECLINED.equals(action)) {
             if (started) answerConfirm(intent, ACTION_CONFIRMED.equals(action));
         } else if (ACTION_START.equals(action) && !started) {
@@ -207,16 +227,22 @@ public class TalkService extends Service implements GatewayLink.Listener, Speake
         }, SystemClock::elapsedRealtime);
         speaker = new SpeakerPipe(this);
         mic = new MicPipe(this, link, speaker, this);
+        plan = newPlan();
+        settleUntil = SystemClock.elapsedRealtime() + ROUTE_SETTLE_MS;
         try {
-            speaker.start(earbuds());
-            mic.start(usbInput());
+            callMode();
+            speaker.start(plan.call, output());
+            mic.start(plan.call, input());
         } catch (IOException | RuntimeException e) {
             Log.e(TAG, "couldn't start audio: " + e.getClass().getSimpleName());
             ducker.close();
+            speaker.stop();
+            leaveCallMode();
             status.why = "Couldn't start audio";
             stopSelf();
             return;
         }
+        voice = new PhoneVoice(this, speaker);
         started = true;
         status.running = true;
         status.why = null;
@@ -242,9 +268,12 @@ public class TalkService extends Service implements GatewayLink.Listener, Speake
         status.replying = false;
         status.hearing = false;
         status.problem = null;
+        status.onSpeaker = false;
         getSystemService(NotificationManager.class).cancel(CONFIRM_NOTIFICATION);
+        if (voice != null) voice.close();
         if (mic != null) mic.stop();
         if (speaker != null) speaker.stop();
+        leaveCallMode();
         if (ducker != null) ducker.close();
         if (started) {
             audio.unregisterAudioDeviceCallback(deviceWatch);
@@ -272,71 +301,172 @@ public class TalkService extends Service implements GatewayLink.Listener, Speake
             default:
                 return true;
         }
-        long now = SystemClock.elapsedRealtime();
-        if (started && now - lastTap > TAP_DEBOUNCE_MS) {
-            lastTap = now;
-            status.taps++;
-            tap(speaker.cut());
-            Log.i(TAG, "earbud tap");
-        }
+        if (started) tapped();
         return true;
+    }
+
+    /** An earbud tap, or a tap on the circle in the app: the reply stops, as does the turn. */
+    private void tapped() {
+        long now = SystemClock.elapsedRealtime();
+        if (now - lastTap <= TAP_DEBOUNCE_MS) return;
+        lastTap = now;
+        status.taps++;
+        tap(speaker.cut());
+        Log.i(TAG, "tap");
     }
 
     // --- routes ------------------------------------------------------------------
 
-    private AudioDeviceInfo usbInput() {
-        return find(AudioManager.GET_DEVICES_INPUTS, AudioDeviceInfo.TYPE_USB_DEVICE, AudioDeviceInfo.TYPE_USB_HEADSET);
+    /** The mic chosen in the app. USB unless another was chosen. */
+    static int micChoice(Context context) {
+        return MicChoice.valid(settings(context).getInt(MIC, MicChoice.DEFAULT));
     }
 
-    private AudioDeviceInfo earbuds() {
-        return find(AudioManager.GET_DEVICES_OUTPUTS, EarbudRoutes.TYPES);
+    /** Saves the choice, and a call on now moves to it. */
+    static void chooseMic(Context context, int choice) {
+        settings(context).edit().putInt(MIC, MicChoice.valid(choice)).apply();
+        if (status.running) context.startService(new Intent(context, TalkService.class).setAction(ACTION_MIC));
     }
 
-    private AudioDeviceInfo find(int direction, int... types) {
-        AudioManager am = getSystemService(AudioManager.class);
-        for (int type : types) {
-            for (AudioDeviceInfo device : am.getDevices(direction)) {
+    private static SharedPreferences settings(Context context) {
+        return context.getSharedPreferences(SETTINGS, MODE_PRIVATE);
+    }
+
+    private AudioDeviceInfo[] inputs() {
+        return audio.getDevices(AudioManager.GET_DEVICES_INPUTS);
+    }
+
+    private AudioDeviceInfo[] outputs() {
+        return audio.getDevices(AudioManager.GET_DEVICES_OUTPUTS);
+    }
+
+    private static int[] types(AudioDeviceInfo[] devices) {
+        int[] types = new int[devices.length];
+        for (int i = 0; i < devices.length; i++) types[i] = devices[i].getType();
+        return types;
+    }
+
+    /** The first device of the first wanted type that's present, or null. */
+    private static AudioDeviceInfo find(AudioDeviceInfo[] devices, int[] wanted) {
+        for (int type : wanted) {
+            for (AudioDeviceInfo device : devices) {
                 if (device.getType() == type) return device;
             }
         }
         return null;
     }
 
+    private MicChoice.Plan newPlan() {
+        List<AudioDeviceInfo> call = audio.getAvailableCommunicationDevices();
+        return MicChoice.plan(micChoice(this), types(inputs()), types(outputs()),
+                types(call.toArray(new AudioDeviceInfo[0])));
+    }
+
+    /** The input to prefer. In call mode, the call's device decides. */
+    private AudioDeviceInfo input() {
+        return plan.call ? null : find(inputs(), plan.mics);
+    }
+
+    /** The output to prefer. In call mode, the call's device decides. */
+    private AudioDeviceInfo output() {
+        return plan.call ? null : find(outputs(), plan.outputs);
+    }
+
+    /** Puts Android in call mode, with the headphones as the call's device, only for the headphones' mic. */
+    private void callMode() {
+        if (!plan.call) {
+            leaveCallMode();
+            return;
+        }
+        AudioDeviceInfo device = null;
+        for (AudioDeviceInfo d : audio.getAvailableCommunicationDevices()) {
+            if (d.getType() == plan.callDevice) device = d;
+        }
+        if (device == null) return; // gone since the plan: checkRoutes finds the mic isn't there
+        if (!inCall) audio.setMode(AudioManager.MODE_IN_COMMUNICATION);
+        inCall = true;
+        AudioDeviceInfo now = audio.getCommunicationDevice();
+        if ((now == null || now.getId() != device.getId()) && !audio.setCommunicationDevice(device)) {
+            Log.i(TAG, "Android wouldn't take the headphones as the call's device");
+        }
+    }
+
+    private void leaveCallMode() {
+        if (!inCall) return;
+        inCall = false;
+        audio.clearCommunicationDevice();
+        audio.setMode(AudioManager.MODE_NORMAL);
+    }
+
+    /**
+     * Follows the mic choice and the devices connected now. A change between media and call mode needs new
+     * streams, because a stream's kind is fixed when it's made.
+     */
     private void applyRoutes() {
         if (!started) return;
-        mic.prefer(usbInput());
-        speaker.prefer(earbuds());
+        MicChoice.Plan next = newPlan();
+        boolean rebuild = next.call != plan.call;
+        if (next.choice != plan.choice || next.call != plan.call || next.onSpeaker() != plan.onSpeaker()) {
+            settleUntil = SystemClock.elapsedRealtime() + ROUTE_SETTLE_MS;
+        }
+        plan = next;
+        if (rebuild) {
+            try {
+                mic.stop();
+                callMode();
+                speaker.reopen(plan.call, output());
+                mic = new MicPipe(this, link, speaker, this);
+                mic.start(plan.call, input());
+            } catch (RuntimeException e) {
+                Log.e(TAG, "couldn't move the audio: " + e.getClass().getSimpleName());
+                end("Couldn't move the audio to that mic");
+                return;
+            }
+            mic.watchRoute(routeWatch, main);
+            speaker.watchRoute(routeWatch, main);
+        } else {
+            callMode();
+            mic.prefer(input());
+            speaker.prefer(output());
+        }
         checkRoutes();
     }
 
-    /** The two privacy rules: the phone's own mic is never sent, and its speaker never plays a reply. */
+    /**
+     * The privacy rules: only the chosen mic is sent, and a reply plays only on the output the choice allows:
+     * the phone's speaker only with the phone's mic and no headphones. A call that can't hear you, or that you
+     * can't hear, says so out loud, on whatever output there is.
+     */
     private void checkRoutes() {
         int in = mic.routedType();
         int out = speaker.routedType();
         boolean anyRoute = Variant.anyRoute(this);
-        // A stream's route can lag behind a device's removal, so the device must also still be there.
-        boolean micOk = anyRoute || usbInput() != null
-                && (in == AudioDeviceInfo.TYPE_USB_DEVICE || in == AudioDeviceInfo.TYPE_USB_HEADSET);
-        boolean soundOk = anyRoute || earbuds() != null
-                && (out == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP || out == AudioDeviceInfo.TYPE_BLE_HEADSET);
+        boolean micOk = anyRoute || MicChoice.allowed(plan.mics, in, types(inputs()));
+        boolean soundOk = anyRoute || MicChoice.allowed(plan.outputs, out, types(outputs()));
         boolean silenced = !anyRoute && (mic.silenced() || (micOk && mic.allZeros()));
         mic.setOpen(micOk);
+        mic.setTalkOver(plan.talkOver);
         speaker.setMuted(!soundOk);
-        boolean problem = !micOk || silenced;
-        if (problem && !micProblem) speaker.warnTone();
-        micProblem = problem;
 
         String text;
+        String spoken = null;
         if (!micOk) {
-            text = "Connect your USB mic. The mic is off until then.";
+            text = noMicText(plan.choice);
+            spoken = noMicSpoken(plan.choice);
         } else if (silenced) {
             text = "Android has silenced the mic. Another app may have taken it.";
+            spoken = "Another app has the mic, so I can't hear you.";
         } else if (!soundOk) {
-            text = "Connect the earbuds. Replies are silent until then.";
+            boolean phone = plan.choice == MicChoice.PHONE;
+            text = phone ? "Replies are silent. They play only in Bluetooth headphones, or on the phone's speaker."
+                    : "Connect your headphones, or choose the phone's mic for its speaker. Replies are silent until then.";
+            spoken = phone ? "Replies are silent for now." : "No headphones, so replies are silent.";
         } else {
-            text = link.connected() ? "Listening on the USB mic" : "Connecting to the Mac";
+            text = link.connected() ? listeningText(plan) : "Connecting to the Mac";
         }
+        announce(spoken);
         status.problem = micOk && !silenced && soundOk ? null : text;
+        status.onSpeaker = plan.onSpeaker();
         if (!text.equals(shownText)) {
             shownText = text;
             getSystemService(NotificationManager.class).notify(NOTIFICATION, notification(text));
@@ -352,6 +482,52 @@ public class TalkService extends Service implements GatewayLink.Listener, Speake
         status.micFloor = mic.floor();
         status.micLeak = mic.leak();
         status.micChannels = mic.channels();
+    }
+
+    /** The warning tone, then the spoken notice, once for each problem, and only once the routes have settled. */
+    private void announce(String spoken) {
+        if (Objects.equals(spoken, announced)) return;
+        if (spoken == null) {
+            announced = null;
+            voice.cancel();
+        } else if (SystemClock.elapsedRealtime() >= settleUntil) {
+            announced = spoken;
+            speaker.warnTone();
+            voice.say(spoken);
+        }
+    }
+
+    private static String noMicText(int choice) {
+        switch (choice) {
+            case MicChoice.HEADSET:
+                return "Connect headphones with a mic, or choose another mic. The mic is off until then.";
+            case MicChoice.PHONE:
+                return "The phone's mic isn't available. The mic is off until it is.";
+            default:
+                return "Connect your USB mic, or choose another mic. The mic is off until then.";
+        }
+    }
+
+    private static String noMicSpoken(int choice) {
+        switch (choice) {
+            case MicChoice.HEADSET:
+                return "No headphones' mic, so I can't hear you.";
+            case MicChoice.PHONE:
+                return "No phone mic, so I can't hear you.";
+            default:
+                return "No USB mic, so I can't hear you.";
+        }
+    }
+
+    private static String listeningText(MicChoice.Plan plan) {
+        switch (plan.choice) {
+            case MicChoice.HEADSET:
+                return "Listening on the headphones' mic";
+            case MicChoice.PHONE:
+                return plan.onSpeaker() ? "Listening on the phone's mic and speaker" : "Listening on the phone's mic";
+            default:
+                return "Listening on the USB mic";
+        }
     }
 
     private Notification notification(String text) {

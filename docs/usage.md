@@ -1,15 +1,29 @@
 # Use Walkie Talkie
 
-This page covers a call from start to end, switching sessions, pausing, the speaker check, how the gateway decides a message has ended, the timing log, how it talks, and troubleshooting.
+This page covers a call from start to end, choosing a mic, switching sessions, pausing, the speaker check, how the gateway decides a message has ended, the timing log, how it talks, and troubleshooting.
 
 ## Start a call
 
-1. Plug in the receiver, and connect the earbuds.
+1. Plug in the receiver, and connect the earbuds. To use another mic, choose it under **Mic** in the app first: see [Choose a mic](#choose-a-mic).
 1. Open the app. It lists the live sessions in groups, one for each Claude Code login, under a heading such as **Work account** or **Personal account**. Within a group, the session with the latest prompt comes first. Each session is a card with its name, and under it where the folder is and when the session last took a prompt. When two sessions look the same, their cards add a short ID. A session goes by its folder's name, except in a Firstmate secondmate home, which goes by the secondmate it declares, such as "secondmate walkie". The main Firstmate goes by its folder's name, "firstmate". The app, the fingerprint prompt, and what you hear all name the session the same way, with its account, such as "secondmate walkie on the personal account". To name a login, see [Name each account](setup.md#name-each-account).
 1. Tap the session you want to talk to, allow the microphone and notifications the first time, and touch the fingerprint sensor. The prompt names the session you tapped. You hear "You're talking to" and its name, and the app shows it under **Talking to**.
 1. Lock the phone, and talk.
 
 Every call takes a fingerprint, and the fingerprint lets the phone talk to that one session for that one call. To talk to another session, [switch](#switch-sessions): tap it in the app, or say **switch session**.
+
+### Choose a mic
+
+**Mic**, on the app's home screen and on the call screen, chooses what a call listens on. The app keeps the choice for later calls. Changed during a call, it moves the call to that mic.
+
+| Mic | Use it with | Replies play | Keep in mind |
+| --- | --- | --- | --- |
+| **USB mic**, the default | A USB audio input, such as a wireless collar mic's USB receiver | In Bluetooth headphones | The clearest sound. A collar mic hears you far louder than anyone nearby |
+| **Headphones' mic** | Bluetooth headphones with a mic | In the same headphones | Android treats it as a phone call, so the headphones drop to call quality, for your voice and for replies |
+| **Phone's mic** | The phone in your hand or pocket, with or without Bluetooth headphones | In Bluetooth headphones, or on the phone's speaker if none are connected | The phone hears clothing, wind, and people nearby more than a collar mic does, so another voice is more likely to count as yours. The [speaker check](#listen-only-to-your-voice) helps |
+
+On the phone's speaker, talking over a reply is off, because the mic would hear the reply as a voice. Wait for the reply to end, or tap the circle in the app to stop it, as an earbud tap would. Replies play aloud, so anyone nearby hears them.
+
+When the call can't hear you, or you can't hear its replies, the phone says so. You hear the warning tone and a short sentence, such as "No USB mic, so I can't hear you." or "No headphones, so replies are silent.", on whatever output there is, the phone's speaker included. It plays once for each problem, about three seconds after the call starts or its mic changes. The app and its notification say what to do. The phone says these few fixed sentences in Android's own offline voice, which no session or gateway notice uses. If the phone has no offline English voice, you hear the tone alone.
 
 | You | What happens |
 | --- | --- |
@@ -17,12 +31,13 @@ Every call takes a fingerprint, and the fingerprint lets the phone talk to that 
 | Pause while you think | Nothing. A pause doesn't end a message, so one thought arrives as one prompt |
 | Talk while the session is busy | You hear "It's in the queue." Your message runs once, in the order you said it, after the current turn. It can't confirm anything in a reply you hadn't heard yet, and the session is told so. That includes a turn that's working in silence, or whose reply hasn't started. Tap first to stop it |
 | Talk while a reply plays | The reply goes quiet at once, on the phone. If you keep talking for about a second, as loud as your last message, it's cut, a running spoken turn stops as a tap stops it, messages still in the queue are dropped, and your words are the next message. The session is told you didn't hear all of that reply. Once a reply has played out, with nothing more on its way, what you say straight after it is an ordinary message, even a single word. Talking over a reply also applies in its first moments, so talking just as it starts may stop its turn before you hear any of it. A short word like "no", a lone "cancel" or "type it", a cough, a knock, or a quieter voice nearby doesn't count, and the reply carries on after about a second, so say a little more, or tap. Until you've spoken once since the gateway started, talking over a reply only pauses it, and the app can take a short word for earbud leak, which makes your voice harder to hear over later replies. If your voice is too soft for the phone to hear over the reply, it plays on, and if you're still talking when it ends, you hear the warning tone, and those words don't count, because their start is gone |
-| Tap an earbud | The reply stops at once, and a running spoken turn is stopped too, along with any shell commands it's running or has left in the background. A command still running after its turn has ended carries on. Messages still in the queue are dropped, and you hear that they were |
+| Tap an earbud, or the circle in the app while a reply plays | The reply stops at once, and a running spoken turn is stopped too, along with any shell commands it's running or has left in the background. A command still running after its turn has ended carries on. Messages still in the queue are dropped, and you hear that they were |
 | Say only "cancel" or "never mind, cancel" | The same as a tap, and you hear "Cancelled." At a [front desk](front-desk.md), you hear "Stopped what was waiting. Anything already filed still stands," because a note already filed stays with the primary. Over a reply or a notice, a lone "cancel" is too short to count, so tap, say "never mind, cancel", or wait for the sound to end. A prompt that merely ends with the word still goes |
 | Say only "pause", then nothing else | Listening stops after the usual two seconds of silence, and you hear "Paused." The word never reaches the session. Until you resume, nothing anyone says reaches the session: no prompts, no yes or no to a read-back, "cancel" and "type it" do nothing, and talking over a reply stops nothing and gives the app no lesson about earbud leak. A running turn keeps going, and you hear its reply. A reply waits while someone's talking, and it can be silenced while they do. A tap still stops the reply and the turn, and it doesn't resume. See [Pause listening](#pause-listening) |
 | Say only "go", "play", or "start" while paused | Listening starts again, and you hear "Listening." The word never reaches the session. Unless you're paused, these are ordinary words |
 | Hear the warning tone, then why a message didn't reach the session | It couldn't send it, the session didn't pick it up in 10 seconds, or the session was stopped at the keyboard. The words after the tone say which |
-| Hear the warning tone with no words | The connection to the Mac dropped, the mic stopped coming from the receiver, you talked too softly over the end of a reply, or the call ended. The app says which |
+| Hear the warning tone with no words | The connection to the Mac dropped, you talked too softly over the end of a reply, or the call ended. The app says which |
+| Hear the warning tone, then a short sentence in another voice, such as "No USB mic, so I can't hear you." | The phone itself can't hear you, or can't play replies. See [Choose a mic](#choose-a-mic) |
 | Hear a short rising tone, then words | That's the gateway speaking, not the session, in its own voice. A reply never comes with that tone |
 | Hear "I lost part of that" | The connection was down for more than the 10 seconds the phone keeps, or the mic stopped coming from the receiver mid-message, so that message was thrown away rather than sent with a hole in it. Say it again |
 | Hear "something on screen" | The reply had code, a path, or something similar there, which isn't read out. Look, or ask what it is. Don't confirm something you haven't heard |
@@ -170,7 +185,7 @@ A call also ends, and the next call takes a new fingerprint, when:
 | What happens | What you notice |
 | --- | --- |
 | You say only "hang up", "hangup", or "hang it up", paused or not | You hear "Hanging up.", then the warning tone. The words never reach the session. A sentence that merely contains them, such as "Please don't hang up yet", goes to the session as a prompt |
-| The earbuds disconnect, including when their battery runs out | The call ends at once, with no tone, and the app says the earbuds disconnected. Losing the USB mic doesn't end the call |
+| The Bluetooth headphones disconnect, including when their battery runs out | The call ends at once, with no tone, and the app says the earbuds disconnected. Losing the USB mic doesn't end the call. A call on the phone's speaker, with no headphones connected, doesn't end this way |
 | Nothing is said or heard for 30 minutes. A reply that's still coming counts as something | You hear "Nothing was said for 30 minutes, so I ended the call," then the warning tone |
 | The phone has been out of reach for 2 minutes | When the phone is back, you hear the warning tone, and the app says the call ended while the phone was away |
 | The session ends, or someone types `/clear` in it | You hear that the session has gone or ended the call |
@@ -196,7 +211,7 @@ This costs time. Your words reach the session about 1.4 seconds later after a fl
 
 After each spoken message, the gateway logs one `turn-timing` line, in milliseconds after your last voiced audio, so marks before that are negative. Every message gets its own line, with `queued`, `refused`, or `dropped` set if that happened. `longest_pause` is the longest pause you carried on from. `speech_detected` is when the gateway decided you were talking, and `transcribe_start` is when the final transcription began. `submitted` should be about 2,000, or 3,000 if you paused. For a session that answers straight away, `first_audio_played` should be about 4,000 to 5,000, or a second more if you paused. `last_voice_at` is that moment on the Mac's monotonic clock, in seconds. The gateway also logs each spoken notice by name, such as `notice queued`, `notice heard`, or `notice paused`, and never its words.
 
-The app's screen shows the routes, which mic channels carry sound, the round trip to the Mac, and underruns. It also shows the mic's loudest level over the last second, its background, and how loud the earbuds leak, all in dB under full scale in the speech band, and how many times you talked over a reply and how many of those resumed.
+The app's screen shows the routes, which mic channels carry sound, the round trip to the Mac, and underruns. It also shows the mic's loudest level over the last second, its background, and how loud the reply leaks into the mic, all in dB under full scale in the speech band, and how many times you talked over a reply and how many of those resumed.
 
 ## Voices
 
@@ -260,8 +275,10 @@ You can also ask by voice. Say something like "talk slower from now on" or "keep
 | "Which session?" names the same session twice | Two sessions have the same name on one login, such as two copies of one repository, or on logins that both go unnamed because their paths or names hold a denied name. Switch with **switch session** if they're the only two, or choose the session in the app by where the folder is |
 | **front-desk** isn't in the app's list | The launcher isn't running, it ran in a stripped environment, such as `env -i`, where Claude Code doesn't load mods, or its `CLAUDE_CONFIG_DIR` isn't a login you installed for. Start it from your usual shell |
 | `A front desk is already running` | Another launcher holds this state folder. Stop that one first |
-| "Connect your USB mic" | The input route isn't USB. With Advanced Protection on, connect the mic before you lock the phone |
+| "Connect your USB mic, or choose another mic" | The input route isn't USB. Plug in the mic, or choose another under **Mic**. With Advanced Protection on, connect the mic before you lock the phone |
+| "Connect headphones with a mic, or choose another mic" | The headphones aren't connected, have no mic, or Android didn't take them for the call. Reconnect them, or choose another mic |
+| "Connect your headphones, or choose the phone's mic for its speaker" | Replies play on the phone's speaker only when **Mic** is **Phone's mic**. Connect Bluetooth headphones, or choose the phone's mic |
 | Your words aren't picked up | Read **Mic level** in the app while you talk. Speech needs to reach about -45 dB, and 12 dB over the background. If it's lower, raise the mic's gain, or turn off its noise cancelling |
-| A reply doesn't stop when you talk over it | Keep talking for about a second, as loud as your last message. Your voice also has to beat **Earbud leak**, under **Audio details** in the app, by about 8 dB. If you've just spoken much closer to the mic, say something first in your normal voice. Otherwise, lower the volume, or tap |
+| A reply doesn't stop when you talk over it | Keep talking for about a second, as loud as your last message. Your voice also has to beat **Reply leak**, under **Audio details** in the app, by about 8 dB. On the phone's speaker, talking over a reply is off: tap the circle in the app instead. If you've just spoken much closer to the mic, say something first in your normal voice. Otherwise, lower the volume, or tap |
 | A reply keeps pausing for a moment or cuts off on its own, or a stray message reaches the session | Loud leak or a noisy place. The app learns the leak as replies play, but it can take a dozen pauses in the first reply after it starts. An echo that lasts past about half a second usually teaches it nothing, and neither does one about as loud as your last message. The exception is a talk-over of four words or fewer that cuts the reply and repeats what just played: it teaches the leak even at that level, and even if it was you. Until you've spoken once since the gateway started, any shorter speech counts as leak, even your own voice. If it goes on, lower the volume |
 | The earbud tap pauses music instead | Another media app took the tap. Close it, and tap again |

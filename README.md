@@ -48,8 +48,7 @@ Your words reach the session as a normal prompt, so the session works as it does
 - [Tailscale](https://tailscale.com/) connected on the Mac and the phone. A VPN that blocks Tailscale has to be off.
 - Claude Code 2.1.318 or later.
 - An Android phone on Android 13 or later, with a fingerprint set up.
-- A USB audio input for the phone, such as a wireless collar mic's USB receiver.
-- Bluetooth earbuds.
+- A mic and a way to hear replies. The best is a USB audio input for the phone, such as a wireless collar mic's USB receiver, with Bluetooth earbuds. Bluetooth headphones with their own mic work too, at call quality, and so does the phone's own mic, with headphones or on the phone's speaker. See [Choose a mic](docs/usage.md#choose-a-mic).
 
 ## Quick start
 
@@ -89,7 +88,7 @@ cd walkie-talkie
 
    Sessions started after this load the mod by themselves. In a session that was already running, type `/reload-plugins` once.
 
-1. Plug the mic's receiver into the phone, connect the earbuds, and open the app. Tap a session, and touch the fingerprint sensor. Then lock the phone and talk.
+1. Plug the mic's receiver into the phone, connect the earbuds, and open the app. To use another mic, choose it under **Mic**. Tap a session, and touch the fingerprint sensor. Then lock the phone and talk.
 
 To keep some folders off the phone, to set up a front desk, or for everything else, see [Documentation](#documentation).
 
@@ -107,15 +106,15 @@ A live session can do anything you can do at its keyboard, so getting into one s
 - **Private network only.** The gateway listens only on the Mac's Tailscale address, and accepts only the one paired phone. No port faces the internet. The app dials the Mac only through the VPN network, so with Tailscale off on the phone, it sends nothing.
 - **The call is encrypted by the app and the gateway themselves.** Every frame after the login is encrypted and authenticated with a key made for that one connection from the pairing token and both sides' login nonces. Tailscale is a second layer around it, not the only one.
 - **Only the sessions you allow.** The mod connects only on the logins you name, and you can keep folders and repositories off the phone.
-- **Speech stays on your devices.** It's recognized and spoken on your Mac. There's no cloud speech service, crash reporter, or analytics, and nothing you say is logged. Claude Code sends your prompts and replies to Anthropic, as it does when you type.
-- **Calls end.** At Stop, when you say "hang up", the moment the earbuds disconnect, after 30 minutes with nothing said, after 2 minutes without the phone, and after four hours at most. The next call takes a new fingerprint.
+- **Speech stays on your devices.** It's recognized and spoken on your Mac. The phone speaks only a few fixed warnings of its own, in Android's offline voice. There's no cloud speech service, crash reporter, or analytics, and nothing you say is logged. Claude Code sends your prompts and replies to Anthropic, as it does when you type.
+- **Calls end.** At Stop, when you say "hang up", the moment the Bluetooth headphones disconnect, after 30 minutes with nothing said, after 2 minutes without the phone, and after four hours at most. The next call takes a new fingerprint.
 - **The gateway's own words sound different.** Notices such as "Paused." play after a short tone that only the phone makes, in a voice no reply can use. A reply that says "Paused." still sounds like the session.
 
 **Once you're in.** These are the limits. Read them before you rely on this.
 
 - **Your voice has your keyboard's authority.** A spoken prompt does whatever a typed one would in that session, tools included. In a session that runs without permission prompts, that's everything. Connect the sessions you'd hand a keyboard to.
 - **The mic can't tell who's speaking.** It's live, with no wake word. Anyone close enough can become a prompt. You can [enroll your voice](docs/usage.md#listen-only-to-your-voice) so the gateway drops messages that don't sound like you, but it only logs scores until you turn on enforcing, and even then it's a filter, not a lock: it doesn't stop a recording of your voice, or a voice close to yours. Say "pause", or stop the app, when you talk to someone else.
-- **A phone taken during a call** can talk to that one session only while your earbuds stay connected. The call ends at once when they disconnect, including when their battery runs out. A thief who stays within radio range of your earbuds can keep talking until you say "hang up", for up to four hours. It can't start another call or switch sessions.
+- **A phone taken during a call** can talk to that one session only while your Bluetooth headphones stay connected. The call ends at once when they disconnect, including when their battery runs out. A thief who stays within radio range of your headphones can keep talking until you say "hang up", for up to four hours. A call on the phone's own mic and speaker has no headphones to lose, so it carries on in a thief's hands until 30 minutes pass with nothing said. It can't start another call or switch sessions.
 - **A spoken yes is not a lock.** Only the fingerprint confirmation at a front desk is, and the session that receives it still acts by reading a note.
 - **A compromised Tailscale account** could put a device between the phone and the Mac. It could see that a call is on, and how much is said, and cut it, but it couldn't read a call, add to it, or start one without the token and your fingerprint. Use two-factor sign-in for Tailscale.
 - **Programs running as you on the Mac** can reach the gateway's private folder. They can relabel a session, speak in Claude's voice, or grant themselves a session. Such a program can already type into your terminals.

@@ -14,6 +14,14 @@
   <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
   <uses-permission android:name="android.permission.WAKE_LOCK"/>
   <uses-permission android:name="android.permission.USE_BIOMETRIC"/>
+  <!-- Call mode, only for the headphones' own mic. -->
+  <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS"/>
+  <!-- Android's text-to-speech, for the phone's own few fixed notices. -->
+  <queries>
+    <intent>
+      <action android:name="android.intent.action.TTS_SERVICE"/>
+    </intent>
+  </queries>
   <application
       android:label="Walkie Talkie"
       android:icon="@mipmap/ic_launcher"

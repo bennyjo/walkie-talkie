@@ -17,8 +17,11 @@ import java.nio.charset.StandardCharsets;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
 /**
- * Opus from the Mac to the earbuds. A silent stream stays open between replies, so Bluetooth is
- * already awake and the first syllable isn't clipped. Normal media playback, never call mode.
+ * Opus from the Mac to the headphones, or to the phone's speaker when the phone's mic is chosen and no
+ * headphones are there. A silent stream stays open between replies, so Bluetooth is already awake and the
+ * first syllable isn't clipped. Normal media playback, except with the headphones' mic, which takes call mode.
+ * While muted, replies are silenced here, and the app's own tones and notices still play, on whatever output
+ * there is, so a call that can't work is never silent.
  */
 final class SpeakerPipe implements Runnable {
     interface Listener {
@@ -49,8 +52,10 @@ final class SpeakerPipe implements Runnable {
     private volatile int holdId;
     private volatile long heldAt;
     private volatile long lastSpeechAt;
-    private AudioTrack track;
+    private volatile boolean muted;
+    private volatile AudioTrack track;
     private MediaCodec decoder;
+    private short[] quiet = new short[FRAME_SAMPLES];
     private Thread thread;
     private long inputTimeUs;
 
@@ -63,26 +68,54 @@ final class SpeakerPipe implements Runnable {
         this.listener = listener;
     }
 
-    void start(AudioDeviceInfo earbuds) throws IOException {
+    /** With call true, the stream is a call's, which plays on the call's device. Otherwise it's media, on output. */
+    void start(boolean call, AudioDeviceInfo output) throws IOException {
         try {
-            open(earbuds);
+            openDecoder();
+            track = openTrack(call, output);
         } catch (IOException | RuntimeException e) {
-            if (track != null) track.release();
             if (decoder != null) decoder.release();
-            track = null;
             decoder = null;
             throw e;
         }
+        startThread();
+    }
+
+    /** A new stream, for a change between media and call: what's queued, and what's cut, carry over. */
+    void reopen(boolean call, AudioDeviceInfo output) {
+        stopThread();
+        AudioTrack old = track;
+        track = null;
+        if (old != null) {
+            old.stop();
+            old.release();
+        }
+        track = openTrack(call, output);
+        startThread();
+    }
+
+    private void startThread() {
         running = true;
         thread = new Thread(this, "walkie-speaker");
         thread.setPriority(Thread.MAX_PRIORITY);
         thread.start();
     }
 
-    private void open(AudioDeviceInfo earbuds) throws IOException {
-        track = new AudioTrack.Builder()
+    private void stopThread() {
+        running = false;
+        if (thread != null) {
+            try {
+                thread.join(2000);
+            } catch (InterruptedException ignored) {
+                Thread.currentThread().interrupt();
+            }
+        }
+    }
+
+    private static AudioTrack openTrack(boolean call, AudioDeviceInfo output) {
+        AudioTrack t = new AudioTrack.Builder()
                 .setAudioAttributes(new AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_MEDIA)
+                        .setUsage(call ? AudioAttributes.USAGE_VOICE_COMMUNICATION : AudioAttributes.USAGE_MEDIA)
                         .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
                 .setAudioFormat(new AudioFormat.Builder().setSampleRate(RATE)
                         .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
@@ -90,9 +123,17 @@ final class SpeakerPipe implements Runnable {
                 .setTransferMode(AudioTrack.MODE_STREAM)
                 .setBufferSizeInBytes(BUFFER_BYTES)
                 .build();
-        track.setPreferredDevice(earbuds);
-        track.play();
+        try {
+            t.setPreferredDevice(output);
+            t.play();
+        } catch (RuntimeException e) {
+            t.release();
+            throw e;
+        }
+        return t;
+    }
 
+    private void openDecoder() throws IOException {
         MediaFormat format = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_OPUS, RATE, 1);
         format.setByteBuffer("csd-0", ByteBuffer.wrap(opusHead()));
         format.setByteBuffer("csd-1", nanoseconds(0));
@@ -103,17 +144,12 @@ final class SpeakerPipe implements Runnable {
     }
 
     void stop() {
-        running = false;
-        if (thread != null) {
-            try {
-                thread.join(2000);
-            } catch (InterruptedException ignored) {
-                Thread.currentThread().interrupt();
-            }
-        }
-        if (track != null) {
-            track.stop();
-            track.release();
+        stopThread();
+        AudioTrack t = track;
+        track = null;
+        if (t != null) {
+            t.stop();
+            t.release();
         }
         synchronized (this) {
             if (decoder != null) {
@@ -125,25 +161,33 @@ final class SpeakerPipe implements Runnable {
     }
 
     void watchRoute(AudioRouting.OnRoutingChangedListener watcher, Handler handler) {
-        track.addOnRoutingChangedListener(watcher, handler);
+        AudioTrack t = track;
+        if (t != null) t.addOnRoutingChangedListener(watcher, handler);
     }
 
-    void prefer(AudioDeviceInfo earbuds) {
-        if (track != null) track.setPreferredDevice(earbuds);
+    void prefer(AudioDeviceInfo output) {
+        AudioTrack t = track;
+        if (t != null) t.setPreferredDevice(output);
     }
 
-    /** Silent unless the route is the earbuds, so a reply never plays out of the phone's speaker. */
+    /**
+     * Replies are silent unless the route is one the mic choice allows, so a reply never plays out of the
+     * phone's speaker unless that's the choice. What's already buffered is dropped. Tones and notices still play.
+     */
     void setMuted(boolean muted) {
-        if (track != null) track.setVolume(muted ? 0f : 1f);
+        if (muted && !this.muted) flushRequested = true;
+        this.muted = muted;
     }
 
     int routedType() {
-        AudioDeviceInfo d = track == null ? null : track.getRoutedDevice();
+        AudioTrack t = track;
+        AudioDeviceInfo d = t == null ? null : t.getRoutedDevice();
         return d == null ? -1 : d.getType();
     }
 
     int underruns() {
-        return track == null ? 0 : track.getUnderrunCount();
+        AudioTrack t = track;
+        return t == null ? 0 : t.getUnderrunCount();
     }
 
     /** The earbud tap: silence now, with no round trip, then a small tick. Returns the generation cut to. */
@@ -205,6 +249,11 @@ final class SpeakerPipe implements Runnable {
         tones.add(warnTone);
     }
 
+    /** One of the phone's own spoken notices, which plays as a tone does, muted or not. */
+    void say(short[] samples) {
+        tones.add(samples);
+    }
+
     /**
      * The gateway's own notice comes next. Its tone joins the speech in order, so it plays just
      * before the notice, and a cut or a hold takes it with the speech.
@@ -246,6 +295,7 @@ final class SpeakerPipe implements Runnable {
     }
 
     @Override public void run() {
+        AudioTrack track = this.track;
         boolean wasSilent = true;
         while (running) {
             if (flushRequested) {
@@ -267,11 +317,18 @@ final class SpeakerPipe implements Runnable {
                     listener.onSpeechStarted();
                 }
                 if (samples != SILENCE) lastSpeechAt = SystemClock.elapsedRealtime();
+                if (muted && samples != SILENCE) samples = quiet(samples.length);
             }
             track.write(samples, 0, samples.length, AudioTrack.WRITE_BLOCKING);
             listener.onSounding(sounding());
         }
         listener.onSounding(false);
+    }
+
+    /** Silence as long as a muted reply's frame, which still takes its time, so a muted reply keeps its pace. */
+    private short[] quiet(int length) {
+        if (quiet.length != length) quiet = new short[length];
+        return quiet;
     }
 
     private static short[] tone(int hertz, double seconds, double level) {
