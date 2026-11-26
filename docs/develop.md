@@ -16,6 +16,8 @@ Earbuds <--A2DP-- AudioTrack (USAGE_MEDIA, preferred Bluetooth output)
                   mod/walk-voice/: runs inside each live Claude Code session
 ```
 
+That's the default, the USB mic. The mic chosen in the app changes the top two lines. The phone's mic is `VOICE_RECOGNITION` from the built-in mic, with replies in the earbuds, or on the phone's speaker with talk-over off. The headphones' mic is Android's call mode: `VOICE_COMMUNICATION` and `USAGE_VOICE_COMMUNICATION`, with the headset as the communication device. `MicChoice` holds these rules.
+
 ## Build and test
 
 Run these from the repository root.
@@ -27,7 +29,7 @@ Run these from the repository root.
 | Mod checks | `claude plugin validate mod/walk-voice` |
 | Phone APK | `android/build.sh` |
 | Emulator test APK | `android/build.sh --debug` |
-| Talk-over gate, audio-ducking and pairing-replacement tests, with no device | `android/build.sh --test` |
+| Talk-over gate, audio-ducking, pairing-replacement, mic-choice routing, and notice-file tests, with no device | `android/build.sh --test` |
 
 The build needs no Gradle. It downloads a JDK and Android's build tools into `android/.toolchain/`, about 570 MB, and checks their checksums. Nothing is installed system-wide. To keep one signing key across builds, so an update installs over the last version, set `WALKIE_KEYSTORE` to a path outside the repository.
 
@@ -50,7 +52,7 @@ The build needs no Gradle. It downloads a JDK and Android's build tools into `an
 | `mod/walk-voice/hooks/register.js` | The mod, including which logins and folders may connect, its check of the fingerprint, and the voice rules, with the style part from the talk file |
 | `mod/walk-voice/hooks/p256.js` | The mod's check of a P-256 signature |
 | `mod/walk-voice/hooks/front-desk.js` | The mod's front-desk role and its rules for the model and the primary |
-| `android/src/main/` | The app. `TalkService` runs the conversation, `TalkGate` hears a voice over a reply, `Ducker` lowers other audio while a reply plays or you speak, and `PhoneKey` holds the hardware key |
+| `android/src/main/` | The app. `TalkService` runs the conversation, `MicChoice` decides which routes the chosen mic allows, `TalkGate` hears a voice over a reply, `Ducker` lowers other audio while a reply plays or you speak, `PhoneVoice` speaks the phone's own warnings, and `PhoneKey` holds the hardware key |
 | `android/src/debug/` | The test allowances, which the phone's APK doesn't contain |
 
 ## Test without a phone
