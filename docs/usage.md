@@ -40,7 +40,7 @@ When the call can't hear you, or you can't hear its replies, the phone says so. 
 | Hear the warning tone, then why a message didn't reach the session | It couldn't send it, the session didn't pick it up in 10 seconds, or the session was stopped at the keyboard. The words after the tone say which |
 | Hear the warning tone with no words | The connection to the Mac dropped, you talked too softly over the end of a reply, or the call ended. The app says which |
 | Hear the warning tone, then a short sentence in another voice, such as "No USB mic, so I can't hear you." | The phone itself can't hear you, or can't play replies. See [Choose a mic](#choose-a-mic) |
-| Hear a short rising tone, then words | That's the gateway speaking, not the session, in the voice you chose, for a sentence or two. A reply never gets that tone, but one may follow straight after a notice |
+| Hear a short rising tone, then words | That's the gateway speaking, not the session, in that session's voice, for a sentence or two. A reply never gets that tone, but one may follow straight after a notice |
 | Hear "I lost part of that" | The connection was down for more than the 10 seconds the phone keeps, or the mic stopped coming from the receiver mid-message, so that message was thrown away rather than sent with a hole in it. Say it again |
 | Hear "something on screen" | The reply had code, a path, or something similar there, which isn't read out. Look, or ask what it is. Don't confirm something you haven't heard |
 | Hear "hasn't started that" | The session has your message, but hasn't started it after 10 seconds. A dialog may be open at the keyboard. It runs when the dialog closes, unless you tap or stop the app |
@@ -217,9 +217,9 @@ The app's screen shows the routes, which mic channels carry sound, the round tri
 
 ## Voices
 
-During a call, tap **Voice** in the app to pick a voice. All of them come with the Kokoro model, the gateway remembers your choice in its state folder, and it takes effect from the next reply.
+During a call, tap **Voice** in the app to pick a voice for the session you're talking to. Each session keeps its own, so Firstmate can speak as Emma and a secondmate as Isabella, and when you switch sessions, **Voice** shows the voice of the session you switched to. All of them come with the Kokoro model. A session you haven't picked a voice for has the default, Bella and Sarah. The gateway remembers each choice in its state folder by the session's login and folder, so it holds after you restart the gateway, or Claude Code in that folder. Two sessions in the same folder on the same login share a voice. A new voice takes effect from the next reply.
 
-The gateway's own notices, such as "Paused." or "It's in the queue.", speak in the voice you chose, after a short rising tone from the phone. Only notices get that tone, so a reply that says "Paused." on its own plays without it. The tone marks where a notice starts, not where it ends: a notice is a sentence or two, and anything after it may be a reply. A new voice takes effect for notices at once.
+The gateway's own notices, such as "Paused." or "It's in the queue.", speak in the voice of the session they're about, after a short rising tone from the phone. A notice about no session, such as "No session is connected.", speaks in the default voice. Only notices get that tone, so a reply that says "Paused." on its own plays without it. The tone marks where a notice starts, not where it ends: a notice is a sentence or two, and anything after it may be a reply. A new voice takes effect for notices at once.
 
 ## How it talks
 
