@@ -127,6 +127,9 @@ public class MainActivity extends Activity {
     private LinearLayout permissionCard;
     private TextView permissionTitle;
     private TextView permissionDetail;
+    private TextView permissionHint;
+    private Button denyButton;
+    private Button approveButton;
     private TextView talkNote;
     private TextView talkDays;
     private TextView switchLabel;
@@ -161,7 +164,7 @@ public class MainActivity extends Activity {
     private boolean switchAsked;   // the fingerprint for that switch has been asked for
     private long switchingSince;
     private String declined;   // the confirmation last turned down here
-    private String answered;   // the permission request last answered here
+    private String drawnPermission; // the challenge of the request the card shows, which a tap answers
     private String notice;     // good news during a call, such as the session it moved to
     private long noticeSince;
     private String seenMessage;
@@ -392,21 +395,26 @@ public class MainActivity extends Activity {
         permissionCard.setPadding(ui.dp(Ui.SPACE_XL), ui.dp(Ui.SPACE_XL), ui.dp(Ui.SPACE_XL), ui.dp(Ui.SPACE_L));
         permissionCard.addView(ui.label("The session asks for a permission"));
         permissionTitle = ui.title("");
+        permissionTitle.setTextDirection(View.TEXT_DIRECTION_LTR); // drawn in the order it runs
         permissionCard.addView(permissionTitle, ui.below(Ui.SPACE_S));
         permissionDetail = ui.body("");
         permissionDetail.setTypeface(android.graphics.Typeface.MONOSPACE);
         permissionDetail.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 14);
+        permissionDetail.setTextDirection(View.TEXT_DIRECTION_LTR);
         permissionCard.addView(permissionDetail, ui.below(Ui.SPACE_S));
         // Deny and Approve look and work alike: neither answer is the easy one.
         LinearLayout answers = new LinearLayout(this);
         answers.setOrientation(LinearLayout.HORIZONTAL);
         LinearLayout.LayoutParams half = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1);
-        answers.addView(ui.secondary("Deny", () -> answerPermission("deny")), half);
+        denyButton = ui.secondary("Deny", () -> answerPermission("deny"));
+        answers.addView(denyButton, half);
         LinearLayout.LayoutParams otherHalf = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1);
         otherHalf.leftMargin = ui.dp(Ui.SPACE_M);
-        answers.addView(ui.secondary("Approve", () -> answerPermission("allow")), otherHalf);
+        approveButton = ui.secondary("Approve", () -> answerPermission("allow"));
+        answers.addView(approveButton, otherHalf);
         permissionCard.addView(answers, ui.below(Ui.SPACE_XL));
-        permissionCard.addView(ui.muted("Approve allows this once."), ui.below(Ui.SPACE_M));
+        permissionHint = ui.muted("");
+        permissionCard.addView(permissionHint, ui.below(Ui.SPACE_M));
         content.addView(permissionCard, ui.below(Ui.SPACE_XXL));
 
         talkNote = ui.note(false);
@@ -721,19 +729,19 @@ public class MainActivity extends Activity {
 
     /** Approve or Deny: the fingerprint signs this request and this answer, so neither can stand for the other. */
     private void answerPermission(String decision) {
-        JSONObject permission = TalkService.status.permission;
-        if (permission == null || asking) return;
-        String nonce = permission.optString("nonce");
-        String text = permission.optString("text");
-        String signed;
-        try {
-            signed = GatewayLink.permissionMessage(nonce, permission.optString("request"), decision, text);
-        } catch (GeneralSecurityException e) {
+        TalkService.Status status = TalkService.status;
+        JSONObject permission = status.permission;
+        // Only the request the card shows, and only while the answer can reach the Mac.
+        if (permission == null || asking || !status.card.canAnswer(status.connected, drawnPermission)
+                || !permission.optString("nonce").equals(drawnPermission)) {
+            render();
             return;
         }
+        String nonce = drawnPermission;
+        String text = permission.optString("text");
+        String signed = PermissionCard.message(nonce, permission.optString("request"), decision, text);
         boolean allow = decision.equals("allow");
         fingerprint(allow ? "Approve once" : "Deny", text, signed, signature -> {
-            answered = nonce; // the card goes now, not when the service has passed the answer on
             startService(new Intent(this, TalkService.class)
                     .setAction(TalkService.ACTION_PERMISSION)
                     .putExtra(TalkService.EXTRA_NONCE, nonce)
@@ -1133,8 +1141,8 @@ public class MainActivity extends Activity {
         boolean confirming = status.confirm != null && switching == null
                 && !status.confirm.optString("nonce").equals(declined);
         JSONObject permission = status.permission;
-        boolean permitting = !confirming && permission != null && switching == null
-                && !permission.optString("nonce").equals(answered);
+        boolean permitting = !confirming && permission != null && switching == null;
+        drawnPermission = permitting ? permission.optString("nonce") : null;
         Ui.shown(confirmCard, confirming);
         Ui.shown(permissionCard, permitting);
         Ui.shown(orb, !confirming && !permitting);
@@ -1147,6 +1155,13 @@ public class MainActivity extends Activity {
             show(permissionTitle, line < 0 ? text : text.substring(0, line));
             show(permissionDetail, line < 0 ? "" : text.substring(line + 1));
             Ui.shown(permissionDetail, line >= 0);
+            boolean open = status.card.canAnswer(status.connected, drawnPermission);
+            denyButton.setEnabled(open);
+            approveButton.setEnabled(open);
+            denyButton.setAlpha(open ? 1f : 0.4f);
+            approveButton.setAlpha(open ? 1f : 0.4f);
+            show(permissionHint, status.card.sending() ? "Sending your answer."
+                    : status.connected ? "Approve allows this once." : "Waiting for the connection to the Mac.");
         }
 
         int state;

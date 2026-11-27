@@ -70,7 +70,10 @@ app, with what it asks to do, and stays open at the keyboard. Approve and Deny e
 take a fingerprint over that one request and that answer, which the gateway and the
 session both check. Approve allows that one call, and Deny refuses it, as the
 keyboard's Yes and No do. Whichever answers first counts: once the keyboard has, the
-app's answer does nothing, and says so. Nothing spoken answers it, and it waits apart
+app's answer does nothing. The session hears the keyboard's answer at once only for a
+shell command, so only then is the app's answer confirmed outright; for another tool, the
+owner hears that it was sent and may be too late. The gateway offers only words the app
+can show as they run, as the session does. Nothing spoken answers it, and it waits apart
 from the read-backs and switches, so a message or a switch's question leaves it standing.
 
 With a voiceprint enrolled, each message is scored against it, beside its transcription.
@@ -178,9 +181,11 @@ PERMISSION = Notice("permission",
 PERMISSION_AT_KEYBOARD = Notice("permission-keyboard", "The session is asking for a permission at the keyboard. Answer it there.")
 APPROVED = Notice("approved", "Approved.")
 DENIED = Notice("denied", "Denied.")
+# The session can't tell at once whether the keyboard answered a call other than a shell command first.
+APPROVAL_SENT = Notice("approval-sent", "Sent your approval. If the keyboard answered first, that answer stands.")
+DENIAL_SENT = Notice("denial-sent", "Sent your denial. If the keyboard answered first, that answer stands.")
 PERMISSION_GONE = Notice("permission-gone", "That permission was already answered, or has gone, so I sent nothing.")
 NOT_ANSWERED = Notice("not-answered", "I couldn't answer that permission. It's still waiting at the keyboard.")
-MAX_PERMISSION_TEXT = 2000  # what the app shows of a permission request
 TURN_FAILED = Notice("turn-failed", "The turn stopped with an error. It's on screen.")
 NOTHING_TO_CONFIRM = Notice("nothing-to-confirm", "Nothing is waiting for a yes, so I sent nothing.")
 CONFIRM_IN_APP = Notice("confirm-in-app", "To confirm, open the app and use your fingerprint.")
@@ -320,6 +325,7 @@ class Conversation:
         self.readback = None        # the relayed reply a yes would answer
         self.confirming = None      # (nonce, read-back or Switch, expiry): waiting for a fingerprint in the app
         self.permission = None      # (nonce, request, text): the chosen session's dialog, offered in the app
+        self.permission_answered = None  # the offer the app last answered, which it may send again after a drop
         self.active_at = clock()    # the last time anything was said or heard
         self.lost_at = None         # when the phone went, while an approved run waits for it
         self.sounding_relay = None  # the relayed reply whose audio went out last, until it has played through
@@ -352,9 +358,12 @@ class Conversation:
     def phone_connected(self):
         self.phone.send_control({"t": "cut", "gen": self.gen})
         self._send_voices()
-        self.sessions_changed()
-        if self.permission:  # it may have waited longer than the connection
+        # It may have waited longer than the connection, or gone while the phone was away.
+        if self.permission:
             self._send_permission()
+        else:
+            self.phone.send_control({"t": "permission", "nonce": None})
+        self.sessions_changed()
 
     def mic_packet(self, packet):
         samples = self.decoder.decode(packet)
@@ -938,11 +947,11 @@ class Conversation:
 
     def _offer_permission(self, request, text):
         """The chosen session's dialog, for the app. Without a request, the session can't take the app's answer."""
-        if not (isinstance(request, str) and request and "|" not in request and isinstance(text, str)):
+        if not (isinstance(request, str) and request and "|" not in request and security.draws_as_it_runs(text)):
             if self.reply_turn:
                 self.say(PERMISSION_AT_KEYBOARD)
             return
-        self.permission = (security.new_nonce(), request, text[:MAX_PERMISSION_TEXT])
+        self.permission = (security.new_nonce(), request, text)
         self._send_permission()
         self.say(PERMISSION)
 
@@ -959,10 +968,14 @@ class Conversation:
         """A fingerprint in the app, over this request and this answer. Only now does the answer go to the session."""
         permission, session = self.permission, self._chosen_session()
         self.active_at = self.clock()
+        if nonce is not None and nonce == self.permission_answered:
+            self.phone.send_control({"t": "permission", "nonce": None})  # sent again after a drop: it's in hand
+            return
         if not permission or nonce != permission[0] or session is None:
             self.say(PERMISSION_GONE)
             return
         self._drop_permission()
+        self.permission_answered = nonce
         _, request, text = permission
         if decision not in ("allow", "deny") or not self.phone.signed(
                 security.permission_message(nonce, request, decision, text), signature):
@@ -1102,7 +1115,11 @@ class Conversation:
             return
         if what == "permission":
             if event.get("ok"):
-                self.say(APPROVED if value["decision"] == "allow" else DENIED)
+                allow = value["decision"] == "allow"
+                if event.get("sure"):
+                    self.say(APPROVED if allow else DENIED)
+                else:
+                    self.say(APPROVAL_SENT if allow else DENIAL_SENT)
             else:
                 self.say(PERMISSION_GONE if event.get("gone") else NOT_ANSWERED)
             return

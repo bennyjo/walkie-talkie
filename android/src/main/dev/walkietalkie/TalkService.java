@@ -99,6 +99,7 @@ public class TalkService extends Service implements GatewayLink.Listener, Speake
         volatile int pairingDays = -1;
         volatile JSONObject confirm; // a read-back waiting for a fingerprint, or null
         volatile JSONObject permission; // the session's permission request, waiting for an answer here, or null
+        final PermissionCard card = new PermissionCard(); // that request, and an answer on its way
         volatile boolean pairingOver; // the Mac wants this phone to pair again
         volatile boolean replying;   // a reply is sounding in the earbuds
         volatile boolean hearing;    // the mic hears someone speak
@@ -256,6 +257,7 @@ public class TalkService extends Service implements GatewayLink.Listener, Speake
         status.voices = null;
         status.confirm = null;
         status.permission = null;
+        status.card.offer(null);
         status.session = intent.getStringExtra(EXTRA_NAME);
         status.run = run;
         link.start();
@@ -272,6 +274,7 @@ public class TalkService extends Service implements GatewayLink.Listener, Speake
         status.connected = false;
         status.confirm = null;
         status.permission = null;
+        status.card.offer(null);
         status.run = null;
         status.replying = false;
         status.hearing = false;
@@ -740,7 +743,11 @@ public class TalkService extends Service implements GatewayLink.Listener, Speake
 
     /** A permission dialog in the session, which the app can answer. The notification says only that something waits. */
     private void showPermission(JSONObject permission) {
+        boolean again = permission != null && status.card.shown()
+                && permission.optString("nonce").equals(status.permission == null ? null : status.permission.optString("nonce"));
         status.permission = permission;
+        status.card.offer(permission == null ? null : permission.optString("nonce"));
+        if (again) return; // offered again after a reconnect: the owner already knows
         if (permission == null) {
             getSystemService(NotificationManager.class).cancel(PERMISSION_NOTIFICATION);
             return;
@@ -763,12 +770,14 @@ public class TalkService extends Service implements GatewayLink.Listener, Speake
                 .build());
     }
 
-    /** Approve or Deny, signed with a fingerprint in the app, for the request still waiting. */
+    /**
+     * Approve or Deny, signed with a fingerprint in the app, for the request still waiting. The card stays,
+     * with its buttons waiting, until the gateway withdraws the request, which says the answer arrived. The
+     * link sends the answer again after a reconnect.
+     */
     private void answerPermission(Intent intent) {
-        JSONObject permission = status.permission;
+        if (!status.card.answer(intent.getStringExtra(EXTRA_NONCE))) return;
         String nonce = intent.getStringExtra(EXTRA_NONCE);
-        if (permission == null || nonce == null || !nonce.equals(permission.optString("nonce"))) return;
-        showPermission(null);
         try {
             send(new JSONObject()
                     .put("nonce", nonce)

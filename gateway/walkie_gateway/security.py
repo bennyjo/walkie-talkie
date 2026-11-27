@@ -41,6 +41,8 @@ FAILURE_WINDOW = 60
 FAILURE_LOCKOUT = 60
 PAIRING_DAYS = 30       # then the phone pairs again, at the Mac
 PHONE_FILE = "phone.json"
+MAX_PERMISSION_TEXT = 1000  # the most the app shows of a permission request
+MAX_PERMISSION_LINES = 20   # and in lines, so no line of it sits screens away from the answers
 PHONE_KEY_FILE = "phone.pub"  # the phone's public key, which the mod reads to check a choice
 
 
@@ -177,6 +179,19 @@ def start_message(nonce, run, instance, mod_nonce):
 def confirm_message(nonce, spoken):
     """What the phone signs to confirm a read-back: the gateway's challenge and the words the owner heard."""
     return "|".join(("walkie-confirm", nonce, hashlib.sha256(spoken.encode()).hexdigest()))
+
+
+def draws_as_it_runs(text):
+    """Whether the app can show these words exactly as they run, as drawsAsItRuns in the mod checks.
+
+    Only printable ASCII, newlines, and tabs: anything else can draw in another order, look like another
+    letter, or draw as nothing. And short enough to read in one view, with no blank line or trailing space
+    that could push a line out of sight.
+    """
+    return (isinstance(text, str) and len(text) <= MAX_PERMISSION_TEXT
+            and all(" " <= c <= "~" or c in "\n\t" for c in text)
+            and text.count("\n") < MAX_PERMISSION_LINES and "\n\n" not in text
+            and not any(line.endswith((" ", "\t")) for line in text.split("\n")) and not text.endswith("\n"))
 
 
 def permission_message(nonce, request, decision, text):

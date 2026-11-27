@@ -55,18 +55,20 @@ While a reply plays or you speak, the phone lowers other audio, such as music, s
 When a turn you started by voice asks for a permission, such as to run a command, you hear "The session is asking for a permission. To approve or deny it, open the app and use your fingerprint." A notification says something is waiting for your fingerprint.
 
 1. Open the app. It shows what the session asks to do, such as the command it wants to run, with **Deny** and **Approve**.
-1. Tap one, and touch the sensor.
-1. You hear "Approved." or "Denied."
+1. Tap one, and touch the sensor. The card stays, with both buttons waiting, until the Mac has your answer.
+1. For a command, you hear "Approved." or "Denied." For any other tool, you hear "Sent your approval." or "Sent your denial.", then "If the keyboard answered first, that answer stands.", because the session can't tell at once whether the keyboard answered first.
 
 **Approve** allows that one call, as **Yes** at the keyboard does. It doesn't allow the same thing again later, and it doesn't change the session's permission mode. **Deny** refuses the call, as **No** does. The session is told to stop, so it says so and waits for what you say next.
 
-The dialog stays open at the keyboard, and whichever answers first counts. When it's answered at the keyboard, or the turn stops, the app's card goes. An answer from the app after that does nothing, and you hear "That permission was already answered, or has gone, so I sent nothing."
+The dialog stays open at the keyboard, and whichever answers first counts. When it's answered at the keyboard, or the turn stops, the app's card goes. An answer from the app after that does nothing. When the session can tell, you hear "That permission was already answered, or has gone, so I sent nothing." For a command, it tells at once. For another tool, it may only tell once that tool has finished, so an answer in between is sent, and the keyboard's answer stands.
 
-Only the app answers, with your fingerprint: not your voice, an earbud tap, the lock screen, or the notification. A tap still stops the turn, and the request goes with it. The app offers a request only when it can show the whole call, exactly as it would run, so your fingerprint approves only what you saw. That covers a command, a file, URL, or path the tool acts on with nothing else beside it, such as a read of a whole file, and a call whose arguments the app can list in full, up to 1,000 characters in all. The following stay at the keyboard instead, and you hear "The session is asking for a permission at the keyboard. Answer it there.":
+While the connection to the Mac is down, both buttons wait, and the card says so. An answer you gave just as the connection dropped isn't lost: the app sends it again when the connection comes back, and the card stays until the Mac has it.
+
+Only the app answers, with your fingerprint: not your voice, an earbud tap, the lock screen, or the notification. A tap still stops the turn, and the request goes with it. The app offers a request only when it can show the whole call, exactly as it would run, so your fingerprint approves only what you saw. That covers a command, a file, URL, or path the tool acts on with nothing else beside it, such as a read of a whole file, and a call whose arguments the app can list in full. The words must be plain ASCII letters, digits, punctuation, spaces, tabs, and line breaks, at most 1,000 characters and 20 lines in all, with no blank line and no space at the end of a line. The following stay at the keyboard instead, and you hear "The session is asking for a permission at the keyboard. Answer it there.":
 
 - A call that carries more than the app shows, such as a write's content, an edit's change, or a notebook cell's source.
-- A call too long to show whole.
-- A call with characters that could make it look different from what runs, such as hidden, control, or text-direction characters.
+- A call too long to show whole: over 1,000 characters or 20 lines.
+- A call with any character outside plain ASCII, such as an accented or right-to-left letter, a letter that looks like a Latin one, or a hidden, control, or text-direction character, because the card could draw it in another order or as another letter. A blank line or a trailing space also keeps it at the keyboard, because padding could push a line out of sight.
 - A dialog that a subagent opens.
 - A question the session asks you, or a plan for you to approve.
 

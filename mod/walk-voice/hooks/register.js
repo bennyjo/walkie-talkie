@@ -45,6 +45,7 @@ const IDLE_MS = 31 * 60 * 1000 // the gateway ends a run after 30 minutes with n
 const CONNECTED = 'Walkie-talkie connected after a fingerprint on the phone. Spoken words now reach this session.'
 const ENDED = 'Walkie-talkie ended.'
 const MAX_PERMISSION_TEXT = 1000 // the most the phone shows of a permission request
+const MAX_PERMISSION_LINES = 20 // and in lines, so no line of it sits screens away from the answers
 const SHOWN_FIELDS = ['command', 'file_path', 'notebook_path', 'url', 'path']
 const NAP = ['/bin/sleep', '2'] // a hook's own time is capped, and a wait on a process doesn't count toward it
 // Tools whose dialog is the call itself, a question or a plan to approve: a hook's allow doesn't close it.
@@ -512,8 +513,8 @@ async function ownTerminal($) {
 
 // The phone sees the whole call, exactly as it would run, so a fingerprint approves only what it
 // showed: the one field the tool acts on, beside nothing but a command's own label, or else every
-// argument. A call it can't show whole, such as a write's content, a cut command, or one with
-// characters that draw differently than they run, has none.
+// argument. A call it can't show whole, such as a write's content, a cut command, or one that could
+// draw differently than it runs, has none.
 function describeRequest(tool, input) {
   const args = input !== null && typeof input === 'object' ? input : {}
   const field = SHOWN_FIELDS.find((key) => typeof args[key] === 'string')
@@ -521,8 +522,21 @@ function describeRequest(tool, input) {
   if (field && Object.keys(args).some((key) => key !== field && key !== label)) return null
   const detail = field ? args[field] : JSON.stringify(args) === '{}' ? '' : JSON.stringify(args)
   const text = detail ? `Allow ${tool}?\n${detail}` : `Allow ${tool}?`
-  if (text.length > MAX_PERMISSION_TEXT || /[\p{Cc}\p{Cf}\p{Cs}]/u.test(text.replace(/[\n\t]/g, ''))) return null
-  return text
+  return drawsAsItRuns(text) ? text : null
+}
+
+// Only printable ASCII, newlines, and tabs: anything else can draw in another order, look like
+// another letter, or draw as nothing. And short enough to read in one view, with no blank line or
+// trailing space that could push a line out of sight. As security.draws_as_it_runs in the gateway.
+export function drawsAsItRuns(text) {
+  return (
+    text.length <= MAX_PERMISSION_TEXT &&
+    /^[\x20-\x7e\n\t]*$/.test(text) &&
+    text.split('\n').length <= MAX_PERMISSION_LINES &&
+    !text.includes('\n\n') &&
+    !/[ \t]$/m.test(text) &&
+    !text.endsWith('\n')
+  )
 }
 
 // The ask the engine raised for this request: PermissionRequest names no call, so it's the oldest
@@ -560,12 +574,12 @@ function settlePermissions(call) {
 // Holds the dialog's hook until the phone answers or the request goes. The dialog stays open at the
 // keyboard meanwhile, and the engine takes whichever answer comes first, so a late answer here does
 // nothing. A stopped turn ends the wait by aborting the process it's waiting on.
-async function askPhone($, call, text, beneath) {
+async function askPhone($, call, tool, text, beneath) {
   let settle
   const answered = new Promise((resolve) => {
     settle = resolve
   })
-  const permission = { request: newNonce(), call, text, settle }
+  const permission = { request: newNonce(), call, tool, text, settle }
   permissions.push(permission)
   if (permissions.length === 1) offerPermission($)
   try {
@@ -583,7 +597,7 @@ async function askPhone($, call, text, beneath) {
 }
 
 // What the phone signs to answer a request: as security.permission_message.
-function permissionMessage(gatewayNonce, request, decision, text) {
+export function permissionMessage(gatewayNonce, request, decision, text) {
   const digest = Array.from(sha256(new TextEncoder().encode(text)), (b) => b.toString(16).padStart(2, '0')).join('')
   return ['walkie-permission', gatewayNonce, request, decision, digest].join('|')
 }
@@ -605,7 +619,9 @@ async function answerPermission($, id, answer) {
   if (!ok) return post($, 'order', { id, error: 'signature' })
   if (!permissions.includes(permission)) return post($, 'order', { id, gone: true })
   permission.settle(decision === 'allow' ? { behavior: 'allow' } : { behavior: 'deny', message: DENIED_FROM_PHONE })
-  post($, 'order', { id, ok: true })
+  // Only for Bash does this mod hear the keyboard's answer the moment it comes. For another tool,
+  // the keyboard may have answered first, and the engine then drops this one.
+  post($, 'order', permission.tool === 'Bash' ? { id, ok: true, sure: true } : { id, ok: true })
 }
 
 async function realPath($, path) {
@@ -778,7 +794,7 @@ export function register(on) {
       post($, 'permission', {})
       return beneath
     }
-    return askPhone($, ask.id, text, beneath)
+    return askPhone($, ask.id, e.tool_name, text, beneath)
   })
 
   // The keyboard allowed the call, so the phone's answer would come too late.
