@@ -53,7 +53,7 @@ import org.json.JSONObject;
 /**
  * Three screens, one shown at a time. Pair: the Mac's address and a code. Home: the sessions, each a card,
  * and a tap on one starts a call to it, and the mic the call listens on. Talk: the session the call is on, a
- * circle that shows the call's state and stops a reply when tapped, the other sessions to switch to with one
+ * dot that shows the call's state and stops a reply when tapped, the other sessions to switch to with one
  * tap, the mic, and End.
  *
  * Start asks for a fingerprint, every time, and the fingerprint signs that one session for that one run.
@@ -64,7 +64,7 @@ import org.json.JSONObject;
 public class MainActivity extends Activity {
     private static final String TAG = "walkie";
     private static final long REFRESH_MS = 500;
-    private static final long CALL_REFRESH_MS = 200; // so the circle follows your voice and the reply
+    private static final long CALL_REFRESH_MS = 200; // so the dot follows your voice and the reply
     private static final int WARN_DAYS = 3;
     private static final long MESSAGE_MS = 8000; // how long a message shows during a call
     private static final long NOTICE_MS = 6000;  // how long "Now talking to" or "Not switched" shows
@@ -77,7 +77,7 @@ public class MainActivity extends Activity {
         "Plug in the USB mic and connect your headphones before you start.",
         "Connect your headphones before you start. Using their mic makes it a phone call, at call quality.",
         "Replies play in your headphones, or on the phone's speaker if none are connected. "
-                + "On the speaker, wait for a reply to finish, or tap the circle to stop it.",
+                + "On the speaker, wait for a reply to finish, or tap the dot on the call screen to stop it.",
     };
 
     private final Handler main = new Handler(Looper.getMainLooper());
@@ -878,7 +878,7 @@ public class MainActivity extends Activity {
                 .show();
     }
 
-    /** A tap on the circle stops a reply, as an earbud tap does, for when there are no earbuds to tap. */
+    /** A tap on the dot stops a reply, as an earbud tap does, for when there are no earbuds to tap. */
     private void stopReply() {
         if (TalkService.status.running && TalkService.status.replying) {
             startService(new Intent(this, TalkService.class).setAction(TalkService.ACTION_TAP));
@@ -1070,7 +1070,7 @@ public class MainActivity extends Activity {
         } else if (status.replying) {
             state = Orb.REPLYING;
             title = "Replying";
-            hint = status.onSpeaker ? "Tap the circle to stop it." : "Talk over it to cut in.";
+            hint = status.onSpeaker ? "Tap the dot to stop it." : "Talk over it to cut in.";
         } else {
             state = Orb.LISTENING;
             title = "Listening";

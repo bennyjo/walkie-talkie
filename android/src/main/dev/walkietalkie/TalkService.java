@@ -305,7 +305,7 @@ public class TalkService extends Service implements GatewayLink.Listener, Speake
         return true;
     }
 
-    /** An earbud tap, or a tap on the circle in the app: the reply stops, as does the turn. */
+    /** An earbud tap, or a tap on the dot on the call screen: the reply stops, as does the turn. */
     private void tapped() {
         long now = SystemClock.elapsedRealtime();
         if (now - lastTap <= TAP_DEBOUNCE_MS) return;

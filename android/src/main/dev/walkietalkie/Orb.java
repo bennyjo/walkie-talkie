@@ -11,7 +11,7 @@ import android.view.View;
 import android.view.animation.LinearInterpolator;
 
 /**
- * The soft clay circle on the talk screen, which shows the call's state by how it moves: a slow fade while
+ * The soft clay dot on the call screen, which shows the call's state by how it moves: a slow fade while
  * connecting or switching, a faint breath while listening, a quicker swell while it hears you, and a
  * steady breath while a reply plays. With animations off in the phone's settings, it stands still.
  */
