@@ -1070,7 +1070,7 @@ public class MainActivity extends Activity {
         } else if (status.replying) {
             state = Orb.REPLYING;
             title = "Replying";
-            hint = status.onSpeaker ? "Tap the dot to stop it." : "Talk over it to cut in.";
+            hint = status.onSpeaker ? "Tap the red dot to stop it." : "Talk over it to cut in.";
         } else {
             state = Orb.LISTENING;
             title = "Listening";
