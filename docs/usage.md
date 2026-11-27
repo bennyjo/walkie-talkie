@@ -66,15 +66,15 @@ While the connection to the Mac is down, both buttons wait, and the card says so
 
 If the request goes while the fingerprint prompt is open, because it was answered at the keyboard or the turn stopped, the prompt closes, and the app says "That request was already answered." Nothing is sent.
 
-Only the app answers, with your fingerprint: not your voice, an earbud tap, the lock screen, or the notification. A tap still stops the turn, and the request goes with it. The app offers a request only when it can show the whole call, exactly as it would run, so your fingerprint approves only what you saw. That covers a command, a file, URL, or path the tool acts on with nothing else beside it, such as a read of a whole file, and a call whose arguments the app can list in full. The words must be plain ASCII letters, digits, punctuation, spaces, and line breaks, at most 20 lines of at most 40 characters each, with no blank line and no space at the end of a line. The following stay at the keyboard instead, and you hear "The session is asking for a permission at the keyboard. Answer it there.":
+Only the app answers, with your fingerprint: not your voice, an earbud tap, the lock screen, or the notification. A tap still stops the turn, and the request goes with it. The app offers a request only when it can show the whole call, exactly as it would run, so your fingerprint approves only what you saw. That covers a command, a file, URL, or path the tool acts on with nothing else beside it, such as a read of a whole file, and a call whose arguments the app can list in full. The words must be plain ASCII letters, digits, punctuation, spaces, and line breaks, at most 20 lines of at most 30 characters each, with no blank line and no space at the end of a line. The following stay at the keyboard instead, and you hear "The session is asking for a permission at the keyboard. Answer it there.":
 
 - A call that carries more than the app shows, such as a write's content, an edit's change, or a notebook cell's source.
-- A long call: more than 20 lines, or a line of more than 40 characters, including the line that names the tool. Where a line wraps, a space at the break isn't drawn, so two commands that run differently could look the same.
+- A long call: more than 20 lines, or a line of more than 30 characters, including the line that names the tool. Where a line wraps, a space at the break isn't drawn, so two commands that run differently could look the same.
 - A call with any character outside plain ASCII, such as a tab, an accented or right-to-left letter, a letter that looks like a Latin one, or a hidden, control, or text-direction character, because the card could draw it in another order, as another letter, or as almost nothing. A blank line or a trailing space also keeps it at the keyboard, because padding could push a line out of sight.
-
-The app also checks how it drew the words. If it had to wrap any line, which a narrow phone or a large font size can make it do even under 40 characters, it shows the words with "Too wide to show whole on this phone. Answer it at the keyboard.", and both buttons stay off.
 - A dialog that a subagent opens.
 - A question the session asks you, or a plan for you to approve.
+
+The app also checks how it drew the words. If it had to wrap any line, which a narrow phone or a large font size can make it do even under 30 characters, it shows the words with "Too wide to show whole on this phone. Answer it at the keyboard.", and both buttons stay off.
 
 When several dialogs are open, the app offers them one at a time, oldest first.
 

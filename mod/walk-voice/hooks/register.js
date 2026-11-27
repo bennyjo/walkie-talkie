@@ -44,9 +44,8 @@ const GRANT_MS = 4 * 60 * 60 * 1000 // the longest a fingerprint lasts, as the p
 const IDLE_MS = 31 * 60 * 1000 // the gateway ends a run after 30 minutes with nothing said; this backs it up
 const CONNECTED = 'Walkie-talkie connected after a fingerprint on the phone. Spoken words now reach this session.'
 const ENDED = 'Walkie-talkie ended.'
-const MAX_PERMISSION_TEXT = 1000 // the most the phone shows of a permission request
-const MAX_PERMISSION_LINES = 20 // and in lines, so no line of it sits screens away from the answers
-const MAX_PERMISSION_LINE = 40 // and per line, so a phone seldom has to wrap one, which can hide a space
+const MAX_PERMISSION_LINES = 20 // the most lines the phone shows of a request, so none sits screens away from the answers
+const MAX_PERMISSION_LINE = 30 // and per line, which a 360 dp phone draws unwrapped, since a wrap can hide a space
 const SHOWN_FIELDS = ['command', 'file_path', 'notebook_path', 'url', 'path']
 const NAP = ['/bin/sleep', '2'] // a hook's own time is capped, and a wait on a process doesn't count toward it
 // Tools whose dialog is the call itself, a question or a plan to approve: a hook's allow doesn't close it.
@@ -534,7 +533,6 @@ function describeRequest(tool, input) {
 export function drawsAsItRuns(text) {
   const lines = text.split('\n')
   return (
-    text.length <= MAX_PERMISSION_TEXT &&
     /^[\x20-\x7e\n]*$/.test(text) &&
     lines.length <= MAX_PERMISSION_LINES &&
     lines.every((line) => line.length > 0 && line.length <= MAX_PERMISSION_LINE && !line.endsWith(' '))

@@ -1173,18 +1173,20 @@ public class MainActivity extends Activity {
         if (permitting) {
             String text = permission.optString("text");
             int line = text.indexOf('\n');
-            show(permissionTitle, line < 0 ? text : text.substring(0, line));
-            show(permissionDetail, line < 0 ? "" : text.substring(line + 1));
+            String head = line < 0 ? text : text.substring(0, line);
+            String detail = line < 0 ? "" : text.substring(line + 1);
+            show(permissionTitle, head);
+            show(permissionDetail, detail);
             Ui.shown(permissionDetail, line >= 0);
-            drawnWhole = drawnWhole(permissionTitle, line < 0 ? text : text.substring(0, line))
-                    && (line < 0 || drawnWhole(permissionDetail, text.substring(line + 1)));
+            boolean laidOut = laidOut(permissionTitle, head) && (line < 0 || laidOut(permissionDetail, detail));
+            drawnWhole = laidOut && drawnWhole(permissionTitle, head) && (line < 0 || drawnWhole(permissionDetail, detail));
             boolean open = status.card.canAnswer(status.connected, drawnPermission, drawnWhole);
             denyButton.setEnabled(open);
             approveButton.setEnabled(open);
             denyButton.setAlpha(open ? 1f : 0.4f);
             approveButton.setAlpha(open ? 1f : 0.4f);
             show(permissionHint, status.card.sending() ? "Sending your answer."
-                    : !drawnWhole ? "Too wide to show whole on this phone. Answer it at the keyboard."
+                    : laidOut && !drawnWhole ? "Too wide to show whole on this phone. Answer it at the keyboard."
                     : status.connected ? "Approve allows this once." : "Waiting for the connection to the Mac.");
         }
         // The fingerprint prompt for a request that went closes, and says so, instead of signing nothing.
@@ -1289,17 +1291,18 @@ public class MainActivity extends Activity {
         return card;
     }
 
-    /** Changes the text only when it changed, so an idle screen does no drawing. */
-    /**
-     * Whether the view drew these words with no line wrapped. Until its layout holds these very words, the
-     * answer is no, so the buttons wait for the next draw.
-     */
-    private static boolean drawnWhole(TextView view, String words) {
+    /** Whether the view has a layout that holds these very words, so how it drew them can be judged. */
+    private static boolean laidOut(TextView view, String words) {
         android.text.Layout layout = view.getLayout();
-        return layout != null && words.contentEquals(layout.getText())
-                && PermissionCard.drawnWhole(words, layout.getLineCount());
+        return layout != null && words.contentEquals(layout.getText());
     }
 
+    /** Whether the view, laid out with these words, drew them with no line wrapped. */
+    private static boolean drawnWhole(TextView view, String words) {
+        return PermissionCard.drawnWhole(words, view.getLayout().getLineCount());
+    }
+
+    /** Changes the text only when it changed, so an idle screen does no drawing. */
     private static void show(TextView view, String value) {
         if (!value.contentEquals(view.getText())) view.setText(value);
     }

@@ -41,9 +41,8 @@ FAILURE_WINDOW = 60
 FAILURE_LOCKOUT = 60
 PAIRING_DAYS = 30       # then the phone pairs again, at the Mac
 PHONE_FILE = "phone.json"
-MAX_PERMISSION_TEXT = 1000  # the most the app shows of a permission request
-MAX_PERMISSION_LINES = 20   # and in lines, so no line of it sits screens away from the answers
-MAX_PERMISSION_LINE = 40    # and per line, so a phone seldom has to wrap one, which can hide a space
+MAX_PERMISSION_LINES = 20   # the most lines the app shows of a request, so none sits screens away from the answers
+MAX_PERMISSION_LINE = 30    # and per line, which a 360 dp phone draws unwrapped, since a wrap can hide a space
 PHONE_KEY_FILE = "phone.pub"  # the phone's public key, which the mod reads to check a choice
 
 
@@ -191,7 +190,7 @@ def draws_as_it_runs(text):
     short enough to read in one view, with no blank line or trailing space that could push a line out of
     sight.
     """
-    if not isinstance(text, str) or len(text) > MAX_PERMISSION_TEXT or not all(" " <= c <= "~" or c == "\n" for c in text):
+    if not isinstance(text, str) or not all(" " <= c <= "~" or c == "\n" for c in text):
         return False
     lines = text.split("\n")
     return len(lines) <= MAX_PERMISSION_LINES and all(

@@ -1982,7 +1982,7 @@ test("for a tool other than a command, an answer taken isn't claimed to have tak
   const { clock, seen, queue } = world(on, { orders: [{ chosen: true, id: 4, submit: 'search the web' }] })
   queue.push(phoneAnswer(seen, clock, 'deny'))
   let result
-  void spokenAsk($, on, clock, { tool: 'WebSearch', input: { query: 'population of Iceland' } }).then((value) => (result = value))
+  void spokenAsk($, on, clock, { tool: 'WebSearch', input: { query: 'Iceland' } }).then((value) => (result = value))
   await waitFor(clock, () => result !== undefined)
   expect(seen.events).toContainEqual({ kind: 'order', id: 9, ok: true }) // the keyboard may have answered first
 })
@@ -1992,6 +1992,6 @@ test('the signed message matches the fixed example the gateway and the app check
     'walkie-permission|0123456789abcdef0123456789abcdef|fedcba9876543210fedcba9876543210|allow|de6f9c5a83c5800a7ae1db3f2af48c7ed0b1e932913f12ae8760726df14b1787',
   )
   expect(drawsAsItRuns('Allow Bash?\nls -l build')).toBe(true)
-  expect(drawsAsItRuns(Array.from({ length: 20 }, () => 'x'.repeat(40)).join('\n'))).toBe(true) // the limits exactly
-  expect(drawsAsItRuns('Allow Bash?\n' + 'x'.repeat(41))).toBe(false)
+  expect(drawsAsItRuns(Array.from({ length: 20 }, () => 'x'.repeat(30)).join('\n'))).toBe(true) // the limits exactly
+  expect(drawsAsItRuns('Allow Bash?\n' + 'x'.repeat(31))).toBe(false)
 })
