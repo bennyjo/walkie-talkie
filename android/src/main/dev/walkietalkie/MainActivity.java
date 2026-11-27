@@ -157,7 +157,7 @@ public class MainActivity extends Activity {
     private volatile boolean pairingOver;
     private JSONObject picked; // the card tapped, until its call starts
     private String message;    // what went wrong with the last Start or switch, until the next choice
-    private boolean asking;    // a fingerprint prompt is up
+    private final FingerprintPrompt prompt = new FingerprintPrompt(); // whether a fingerprint prompt is up
     private boolean startWanted; // a card was tapped, and waits for the list's connection, as after a permission dialog
     private JSONObject switching; // the session a switch goes to, until the Mac moves the call there or the switch fails
     private String switchingAfter; // the confirmation already waiting at that tap, which isn't the Mac's answer
@@ -167,8 +167,6 @@ public class MainActivity extends Activity {
     private String drawnPermission; // the challenge of the request the card shows, which a tap answers
     private boolean drawnWhole;     // and whether the card drew each of its lines without wrapping
     private CancellationSignal promptCancel; // closes the fingerprint prompt that's up
-    private String promptPermission; // the request the prompt that's up would answer
-    private boolean promptGone;      // that request went while the prompt was up
     private String notice;     // good news during a call, such as the session it moved to
     private long noticeSince;
     private String seenMessage;
@@ -494,7 +492,7 @@ public class MainActivity extends Activity {
     @Override protected void onPause() {
         resumed = false;
         main.removeCallbacks(refresh);
-        if (!asking) stopBrowse();
+        if (!prompt.asking()) stopBrowse();
         super.onPause();
     }
 
@@ -635,7 +633,7 @@ public class MainActivity extends Activity {
 
     /** A card tapped on Home: the call to that session starts, after the fingerprint. */
     private void startWith(JSONObject session) {
-        if (TalkService.status.running || startWanted || asking) return;
+        if (TalkService.status.running || startWanted || prompt.asking()) return;
         message = null;
         picked = session;
         TalkService.status.why = null;
@@ -736,7 +734,7 @@ public class MainActivity extends Activity {
         TalkService.Status status = TalkService.status;
         JSONObject permission = status.permission;
         // Only the request the card shows, and only while the answer can reach the Mac.
-        if (permission == null || asking || !status.card.canAnswer(status.connected, drawnPermission, drawnWhole)
+        if (permission == null || prompt.asking() || !status.card.canAnswer(status.connected, drawnPermission, drawnWhole)
                 || !permission.optString("nonce").equals(drawnPermission)) {
             render();
             return;
@@ -745,10 +743,7 @@ public class MainActivity extends Activity {
         String text = permission.optString("text");
         String signed = PermissionCard.message(nonce, permission.optString("request"), decision, text);
         boolean allow = decision.equals("allow");
-        promptPermission = nonce;
-        promptGone = false;
         fingerprint(allow ? "Approve once" : "Deny", text, signed, signature -> {
-            promptPermission = null;
             if (!TalkService.status.card.offers(nonce)) {
                 permissionWent(); // the request went just as the sensor was touched
                 return;
@@ -758,15 +753,11 @@ public class MainActivity extends Activity {
                     .putExtra(TalkService.EXTRA_NONCE, nonce)
                     .putExtra(TalkService.EXTRA_DECISION, decision)
                     .putExtra(TalkService.EXTRA_SIG, signature));
-        }, () -> {
-            promptPermission = null;
-            if (promptGone) permissionWent();
-        });
+        }, null, nonce);
     }
 
     /** The request was answered at the keyboard, or went, before the answer here: nothing was sent. */
     private void permissionWent() {
-        promptGone = false;
         message = "That request was already answered.";
     }
 
@@ -785,7 +776,7 @@ public class MainActivity extends Activity {
     /** A session tapped under Switch to: the call moves there, after the fingerprint. */
     private void switchTo(JSONObject session) {
         TalkService.Status status = TalkService.status;
-        if (!status.running || status.run == null || switching != null || asking) return;
+        if (!status.running || status.run == null || switching != null || prompt.asking()) return;
         if (session.optString("id").equals(chosenId(status))) return;
         message = null;
         notice = null;
@@ -832,10 +823,10 @@ public class MainActivity extends Activity {
             noticeSince = SystemClock.elapsedRealtime();
         } else if (!switchAsked && target != null && target.optString("id").equals(id)
                 && !confirm.optString("nonce").equals(switchingAfter)) {
-            if (!resumed || asking) return;
+            if (!resumed || prompt.asking()) return;
             switchAsked = true;
             confirm(true);
-        } else if (!asking && SystemClock.elapsedRealtime() - switchingSince > SWITCH_WAIT_MS) {
+        } else if (!prompt.asking() && SystemClock.elapsedRealtime() - switchingSince > SWITCH_WAIT_MS) {
             switching = null;
             message = "The call didn't move. You're still talking to " + currentName(status) + ".";
         }
@@ -877,6 +868,12 @@ public class MainActivity extends Activity {
     }
 
     private void fingerprint(String title, String description, String words, Signed then, Runnable cancelled) {
+        fingerprint(title, description, words, then, cancelled, null);
+    }
+
+    /** With request, the challenge of the permission request it answers: the prompt closes if that goes. */
+    private void fingerprint(String title, String description, String words, Signed then, Runnable cancelled,
+            String request) {
         Signature signer;
         try {
             signer = PhoneKey.signer(Pairing.keySlot(this));
@@ -897,25 +894,25 @@ public class MainActivity extends Activity {
             render();
             return;
         }
-        BiometricPrompt prompt = new BiometricPrompt.Builder(this)
+        int serial = prompt.open(request);
+        BiometricPrompt biometric = new BiometricPrompt.Builder(this)
                 .setTitle(title)
                 .setDescription(description)
                 .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG)
                 // Android doesn't report this button as an error, so it ends the prompt the same way a dismissal does.
                 .setNegativeButton("Cancel", getMainExecutor(), (dialog, which) -> {
-                    asking = false;
+                    if (!prompt.ended(serial)) return; // the app had already closed it
                     message = null;
                     if (cancelled != null) cancelled.run();
                     if (!resumed) stopBrowse();
                     render();
                 })
                 .build();
-        asking = true;
         promptCancel = new CancellationSignal();
-        prompt.authenticate(new BiometricPrompt.CryptoObject(signer), promptCancel, getMainExecutor(),
+        biometric.authenticate(new BiometricPrompt.CryptoObject(signer), promptCancel, getMainExecutor(),
                 new BiometricPrompt.AuthenticationCallback() {
                     @Override public void onAuthenticationSucceeded(BiometricPrompt.AuthenticationResult result) {
-                        asking = false;
+                        if (!prompt.ended(serial)) return; // a late touch on a prompt the app closed sends nothing
                         try {
                             then.with(PhoneKey.sign(result.getCryptoObject().getSignature(), words));
                         } catch (GeneralSecurityException e) {
@@ -926,7 +923,7 @@ public class MainActivity extends Activity {
                     }
 
                     @Override public void onAuthenticationError(int code, CharSequence why) {
-                        asking = false;
+                        if (!prompt.ended(serial)) return; // and its late error can't touch a newer prompt
                         message = null;
                         if (cancelled != null) cancelled.run();
                         if (code != BiometricPrompt.BIOMETRIC_ERROR_USER_CANCELED
@@ -1048,7 +1045,7 @@ public class MainActivity extends Activity {
             Pairing pairing = Pairing.load(this);
             if (pairing != null) startBrowse(pairing);
         }
-        if (startWanted && browse != null && browseConnected && picked != null && !asking) requestStart();
+        if (startWanted && browse != null && browseConnected && picked != null && !prompt.asking()) requestStart();
         if (!Objects.equals(message, seenMessage)) {
             seenMessage = message;
             messageSince = SystemClock.elapsedRealtime();
@@ -1093,7 +1090,7 @@ public class MainActivity extends Activity {
     private void renderHome(TalkService.Status status, String host) {
         show(greeting, greeting());
         show(pairedLabel, "Paired with " + host);
-        boolean starting = (startWanted || asking) && picked != null;
+        boolean starting = (startWanted || prompt.asking()) && picked != null;
         show(homeLine, starting ? "Asking your Mac to start " + rowName(picked) + "."
                 : "Choose a session to start talking.");
 
@@ -1189,10 +1186,11 @@ public class MainActivity extends Activity {
                     : laidOut && !drawnWhole ? "Too wide to show whole on this phone. Answer it at the keyboard."
                     : status.connected ? "Approve allows this once." : "Waiting for the connection to the Mac.");
         }
-        // The fingerprint prompt for a request that went closes, and says so, instead of signing nothing.
-        if (asking && promptPermission != null && !promptPermission.equals(drawnPermission) && promptCancel != null) {
-            promptGone = true;
-            promptCancel.cancel();
+        // The fingerprint prompt for a request the gateway withdrew closes, and says so, instead of signing
+        // nothing. It counts as closed at once: after a touch, Android may never call back for it.
+        if (prompt.closeIfWithdrawn(status.card)) {
+            if (promptCancel != null) promptCancel.cancel();
+            permissionWent();
         }
 
         int state;

@@ -73,8 +73,10 @@ public final class PermissionCardTest {
         check(!PermissionCard.drawnWhole(withSpace, 2), "a line wrapped at its space can't be answered");
         check(!PermissionCard.drawnWhole(withoutSpace, 2), "nor its twin, wrapped after the slash");
         check(PermissionCard.drawnWhole(withSpace, 1), "the same line drawn in one row can");
-        check(PermissionCard.drawnWhole("echo one\necho two", 2), "two lines in two rows can");
-        check(!PermissionCard.drawnWhole("echo one\necho two", 3), "two lines in three rows can't");
+        // The final review's command: a line break draws just like the wrap above, but deletes the home folder.
+        check(!PermissionCard.drawnWhole("rm -rf /Users/benny/\ntmp_build_artifacts_cache_2026", 2),
+                "a command with a line break can't be answered, though each line fits its row");
+        check(!PermissionCard.drawnWhole("echo one\necho two", 2), "nor any two lines in two rows");
         PermissionCard card = new PermissionCard();
         card.offer("n1");
         check(!card.canAnswer(true, "n1", false), "both buttons stay off for a card that wrapped a line");

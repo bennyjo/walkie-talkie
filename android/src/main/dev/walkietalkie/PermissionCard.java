@@ -51,11 +51,12 @@ final class PermissionCard {
     }
 
     /**
-     * Whether these words drew in as many rows as they have lines. A wrapped line can hide a space where it
-     * breaks, so two commands that run differently can draw the same, and then only the keyboard answers.
+     * Whether these words are one line, drawn in one row. A wrapped line can hide a space where it breaks,
+     * and a line break looks just like a wrap, so two commands that run differently can draw the same. Then
+     * only the keyboard answers.
      */
     static boolean drawnWhole(String words, int rows) {
-        return rows == words.split("\n", -1).length;
+        return rows == 1 && words.indexOf('\n') < 0;
     }
 
     /** Whether a control from the gateway, offering this challenge or null, means a kept answer arrived. */

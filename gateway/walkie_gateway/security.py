@@ -41,7 +41,7 @@ FAILURE_WINDOW = 60
 FAILURE_LOCKOUT = 60
 PAIRING_DAYS = 30       # then the phone pairs again, at the Mac
 PHONE_FILE = "phone.json"
-MAX_PERMISSION_LINES = 20   # the most lines the app shows of a request, so none sits screens away from the answers
+MAX_PERMISSION_LINES = 2    # the tool's line and one more: on the card, a line break looks just like a wrap
 MAX_PERMISSION_LINE = 30    # and per line, which a 360 dp phone draws unwrapped, since a wrap can hide a space
 PHONE_KEY_FILE = "phone.pub"  # the phone's public key, which the mod reads to check a choice
 
@@ -184,11 +184,11 @@ def confirm_message(nonce, spoken):
 def draws_as_it_runs(text):
     """Whether the app can show these words exactly as they run, as drawsAsItRuns in the mod checks.
 
-    Only printable ASCII and newlines: anything else can draw in another order, look like another letter,
-    or draw as nothing, and a tab can draw as a gap of a few pixels. Short lines, because a space where the
-    phone wraps a line isn't drawn; the app also keeps its buttons off for any line it has to wrap. And
-    short enough to read in one view, with no blank line or trailing space that could push a line out of
-    sight.
+    Only printable ASCII and the newline after the tool's line: anything else can draw in another order,
+    look like another letter, or draw as nothing, and a tab can draw as a gap of a few pixels. One line of
+    what the call acts on, because on the card a line break looks just like a wrapped line. Short lines,
+    because a space where the phone wraps a line isn't drawn; the app also keeps its buttons off for any
+    line it has to wrap. And no trailing space.
     """
     if not isinstance(text, str) or not all(" " <= c <= "~" or c == "\n" for c in text):
         return False

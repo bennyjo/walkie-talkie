@@ -291,9 +291,10 @@ class PermissionMessageTest(unittest.TestCase):
 
     def test_only_words_that_draw_as_they_run_are_shown(self):
         self.assertTrue(security.draws_as_it_runs("Allow Bash?\nls -l build"))
-        self.assertTrue(security.draws_as_it_runs("\n".join("x" * 30 for _ in range(20))))  # the limits exactly
+        self.assertTrue(security.draws_as_it_runs("x" * 30 + "\n" + "x" * 30))  # the limits exactly
         for text in ("Allow Bash?\n\u05d0=1; rm -rf ~", "Allow Bash?\ncaf\u00e9", "Allow Bash?\n\r", "x" * 31,
-                     "\n".join("x" for _ in range(21)), "a\n\nb", "a \nb", "a\t", "a\n", "\na", None,
+                     "a\nb\nc", "Allow Bash?\nrm -rf /Users/benny/\ntmp_build_artifacts_cache_2026",
+                     "a\n\nb", "a \nb", "a\t", "a\n", "\na", None,
                      "rm -rf ~/proj/build\t~", "rm -rf /Users/benny/ tmp_build_artifacts_cache_2026",
                      "rm -rf /Users/benny/tmp_build_artifacts_cache_2026"):
             with self.subTest(text=text):
