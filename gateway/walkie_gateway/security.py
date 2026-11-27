@@ -43,6 +43,7 @@ PAIRING_DAYS = 30       # then the phone pairs again, at the Mac
 PHONE_FILE = "phone.json"
 MAX_PERMISSION_TEXT = 1000  # the most the app shows of a permission request
 MAX_PERMISSION_LINES = 20   # and in lines, so no line of it sits screens away from the answers
+MAX_PERMISSION_LINE = 40    # and per line, so a phone seldom has to wrap one, which can hide a space
 PHONE_KEY_FILE = "phone.pub"  # the phone's public key, which the mod reads to check a choice
 
 
@@ -184,14 +185,17 @@ def confirm_message(nonce, spoken):
 def draws_as_it_runs(text):
     """Whether the app can show these words exactly as they run, as drawsAsItRuns in the mod checks.
 
-    Only printable ASCII, newlines, and tabs: anything else can draw in another order, look like another
-    letter, or draw as nothing. And short enough to read in one view, with no blank line or trailing space
-    that could push a line out of sight.
+    Only printable ASCII and newlines: anything else can draw in another order, look like another letter,
+    or draw as nothing, and a tab can draw as a gap of a few pixels. Short lines, because a space where the
+    phone wraps a line isn't drawn; the app also keeps its buttons off for any line it has to wrap. And
+    short enough to read in one view, with no blank line or trailing space that could push a line out of
+    sight.
     """
-    return (isinstance(text, str) and len(text) <= MAX_PERMISSION_TEXT
-            and all(" " <= c <= "~" or c in "\n\t" for c in text)
-            and text.count("\n") < MAX_PERMISSION_LINES and "\n\n" not in text
-            and not any(line.endswith((" ", "\t")) for line in text.split("\n")) and not text.endswith("\n"))
+    if not isinstance(text, str) or len(text) > MAX_PERMISSION_TEXT or not all(" " <= c <= "~" or c == "\n" for c in text):
+        return False
+    lines = text.split("\n")
+    return len(lines) <= MAX_PERMISSION_LINES and all(
+        0 < len(line) <= MAX_PERMISSION_LINE and not line.endswith(" ") for line in lines)
 
 
 def permission_message(nonce, request, decision, text):

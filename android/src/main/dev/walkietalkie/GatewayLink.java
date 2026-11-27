@@ -174,7 +174,6 @@ final class GatewayLink {
         return "walkie-confirm|" + nonce + "|" + hex(digest);
     }
 
-
     void start() {
         running = true;
         reader = new Thread(this::connectLoop, "walkie-link");

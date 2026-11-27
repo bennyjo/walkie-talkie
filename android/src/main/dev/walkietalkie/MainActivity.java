@@ -165,6 +165,10 @@ public class MainActivity extends Activity {
     private long switchingSince;
     private String declined;   // the confirmation last turned down here
     private String drawnPermission; // the challenge of the request the card shows, which a tap answers
+    private boolean drawnWhole;     // and whether the card drew each of its lines without wrapping
+    private CancellationSignal promptCancel; // closes the fingerprint prompt that's up
+    private String promptPermission; // the request the prompt that's up would answer
+    private boolean promptGone;      // that request went while the prompt was up
     private String notice;     // good news during a call, such as the session it moved to
     private long noticeSince;
     private String seenMessage;
@@ -732,7 +736,7 @@ public class MainActivity extends Activity {
         TalkService.Status status = TalkService.status;
         JSONObject permission = status.permission;
         // Only the request the card shows, and only while the answer can reach the Mac.
-        if (permission == null || asking || !status.card.canAnswer(status.connected, drawnPermission)
+        if (permission == null || asking || !status.card.canAnswer(status.connected, drawnPermission, drawnWhole)
                 || !permission.optString("nonce").equals(drawnPermission)) {
             render();
             return;
@@ -741,13 +745,29 @@ public class MainActivity extends Activity {
         String text = permission.optString("text");
         String signed = PermissionCard.message(nonce, permission.optString("request"), decision, text);
         boolean allow = decision.equals("allow");
+        promptPermission = nonce;
+        promptGone = false;
         fingerprint(allow ? "Approve once" : "Deny", text, signed, signature -> {
+            promptPermission = null;
+            if (!TalkService.status.card.offers(nonce)) {
+                permissionWent(); // the request went just as the sensor was touched
+                return;
+            }
             startService(new Intent(this, TalkService.class)
                     .setAction(TalkService.ACTION_PERMISSION)
                     .putExtra(TalkService.EXTRA_NONCE, nonce)
                     .putExtra(TalkService.EXTRA_DECISION, decision)
                     .putExtra(TalkService.EXTRA_SIG, signature));
+        }, () -> {
+            promptPermission = null;
+            if (promptGone) permissionWent();
         });
+    }
+
+    /** The request was answered at the keyboard, or went, before the answer here: nothing was sent. */
+    private void permissionWent() {
+        promptGone = false;
+        message = "That request was already answered.";
     }
 
     private void decline() {
@@ -891,7 +911,8 @@ public class MainActivity extends Activity {
                 })
                 .build();
         asking = true;
-        prompt.authenticate(new BiometricPrompt.CryptoObject(signer), new CancellationSignal(), getMainExecutor(),
+        promptCancel = new CancellationSignal();
+        prompt.authenticate(new BiometricPrompt.CryptoObject(signer), promptCancel, getMainExecutor(),
                 new BiometricPrompt.AuthenticationCallback() {
                     @Override public void onAuthenticationSucceeded(BiometricPrompt.AuthenticationResult result) {
                         asking = false;
@@ -1155,13 +1176,21 @@ public class MainActivity extends Activity {
             show(permissionTitle, line < 0 ? text : text.substring(0, line));
             show(permissionDetail, line < 0 ? "" : text.substring(line + 1));
             Ui.shown(permissionDetail, line >= 0);
-            boolean open = status.card.canAnswer(status.connected, drawnPermission);
+            drawnWhole = drawnWhole(permissionTitle, line < 0 ? text : text.substring(0, line))
+                    && (line < 0 || drawnWhole(permissionDetail, text.substring(line + 1)));
+            boolean open = status.card.canAnswer(status.connected, drawnPermission, drawnWhole);
             denyButton.setEnabled(open);
             approveButton.setEnabled(open);
             denyButton.setAlpha(open ? 1f : 0.4f);
             approveButton.setAlpha(open ? 1f : 0.4f);
             show(permissionHint, status.card.sending() ? "Sending your answer."
+                    : !drawnWhole ? "Too wide to show whole on this phone. Answer it at the keyboard."
                     : status.connected ? "Approve allows this once." : "Waiting for the connection to the Mac.");
+        }
+        // The fingerprint prompt for a request that went closes, and says so, instead of signing nothing.
+        if (asking && promptPermission != null && !promptPermission.equals(drawnPermission) && promptCancel != null) {
+            promptGone = true;
+            promptCancel.cancel();
         }
 
         int state;
@@ -1261,6 +1290,16 @@ public class MainActivity extends Activity {
     }
 
     /** Changes the text only when it changed, so an idle screen does no drawing. */
+    /**
+     * Whether the view drew these words with no line wrapped. Until its layout holds these very words, the
+     * answer is no, so the buttons wait for the next draw.
+     */
+    private static boolean drawnWhole(TextView view, String words) {
+        android.text.Layout layout = view.getLayout();
+        return layout != null && words.contentEquals(layout.getText())
+                && PermissionCard.drawnWhole(words, layout.getLineCount());
+    }
+
     private static void show(TextView view, String value) {
         if (!value.contentEquals(view.getText())) view.setText(value);
     }

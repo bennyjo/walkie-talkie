@@ -46,6 +46,7 @@ const CONNECTED = 'Walkie-talkie connected after a fingerprint on the phone. Spo
 const ENDED = 'Walkie-talkie ended.'
 const MAX_PERMISSION_TEXT = 1000 // the most the phone shows of a permission request
 const MAX_PERMISSION_LINES = 20 // and in lines, so no line of it sits screens away from the answers
+const MAX_PERMISSION_LINE = 40 // and per line, so a phone seldom has to wrap one, which can hide a space
 const SHOWN_FIELDS = ['command', 'file_path', 'notebook_path', 'url', 'path']
 const NAP = ['/bin/sleep', '2'] // a hook's own time is capped, and a wait on a process doesn't count toward it
 // Tools whose dialog is the call itself, a question or a plan to approve: a hook's allow doesn't close it.
@@ -525,17 +526,18 @@ function describeRequest(tool, input) {
   return drawsAsItRuns(text) ? text : null
 }
 
-// Only printable ASCII, newlines, and tabs: anything else can draw in another order, look like
-// another letter, or draw as nothing. And short enough to read in one view, with no blank line or
-// trailing space that could push a line out of sight. As security.draws_as_it_runs in the gateway.
+// Only printable ASCII and newlines: anything else can draw in another order, look like another
+// letter, or draw as nothing, and a tab can draw as a gap of a few pixels. Short lines, because a
+// space where the phone wraps a line isn't drawn; the app also keeps its buttons off for any line it
+// has to wrap. And short enough to read in one view, with no blank line or trailing space that could
+// push a line out of sight. As security.draws_as_it_runs in the gateway.
 export function drawsAsItRuns(text) {
+  const lines = text.split('\n')
   return (
     text.length <= MAX_PERMISSION_TEXT &&
-    /^[\x20-\x7e\n\t]*$/.test(text) &&
-    text.split('\n').length <= MAX_PERMISSION_LINES &&
-    !text.includes('\n\n') &&
-    !/[ \t]$/m.test(text) &&
-    !text.endsWith('\n')
+    /^[\x20-\x7e\n]*$/.test(text) &&
+    lines.length <= MAX_PERMISSION_LINES &&
+    lines.every((line) => line.length > 0 && line.length <= MAX_PERMISSION_LINE && !line.endsWith(' '))
   )
 }
 

@@ -20,6 +20,7 @@ public final class PermissionCardTest {
         tapOnARequestTheCardDoesntShow();
         aNewOfferEndsAKeptAnswer();
         whatTellsTheLinkAnAnswerArrived();
+        onlyACommandDrawnWholeCanBeAnswered();
         System.out.println("PermissionCardTest: " + checks + " checks passed");
     }
 
@@ -31,10 +32,10 @@ public final class PermissionCardTest {
     private static void answerWaitsForTheWithdrawal() {
         PermissionCard card = new PermissionCard();
         card.offer("n1");
-        check(card.shown() && card.canAnswer(true, "n1"), "an offer shows, and can be answered");
+        check(card.shown() && card.canAnswer(true, "n1", true), "an offer shows, and can be answered");
         check(card.answer("n1"), "the answer is taken");
         check(card.shown(), "the card stays until the gateway withdraws the request");
-        check(card.sending() && !card.canAnswer(true, "n1"), "both buttons wait while the answer is on its way");
+        check(card.sending() && !card.canAnswer(true, "n1", true), "both buttons wait while the answer is on its way");
         check(!card.answer("n1"), "a second answer to the same request is refused");
         card.offer("n1");
         check(card.sending(), "the same offer again, after a reconnect, keeps the answer");
@@ -45,15 +46,15 @@ public final class PermissionCardTest {
     private static void answerGivenWhileTheLinkIsDown() {
         PermissionCard card = new PermissionCard();
         card.offer("n1");
-        check(!card.canAnswer(false, "n1"), "no answer while the link is down");
-        check(card.canAnswer(true, "n1"), "the answer opens again when the link is back");
+        check(!card.canAnswer(false, "n1", true), "no answer while the link is down");
+        check(card.canAnswer(true, "n1", true), "the answer opens again when the link is back");
     }
 
     private static void tapOnARequestTheCardDoesntShow() {
         PermissionCard card = new PermissionCard();
         card.offer("n2");
-        check(!card.canAnswer(true, "n1"), "a tap on the card drawn for an earlier request answers nothing");
-        check(!card.canAnswer(true, null), "a tap with no card drawn answers nothing");
+        check(!card.canAnswer(true, "n1", true), "a tap on the card drawn for an earlier request answers nothing");
+        check(!card.canAnswer(true, null, true), "a tap with no card drawn answers nothing");
         check(!card.answer("n1"), "an answer for a request no longer offered is refused");
     }
 
@@ -62,7 +63,23 @@ public final class PermissionCardTest {
         card.offer("n1");
         card.answer("n1");
         card.offer("n2");
-        check(!card.sending() && card.canAnswer(true, "n2"), "a new request starts with nothing answered");
+        check(!card.sending() && card.canAnswer(true, "n2", true), "a new request starts with nothing answered");
+    }
+
+    // The review's pairs: each draws the same on a card that wraps, so only an unwrapped card may be answered.
+    private static void onlyACommandDrawnWholeCanBeAnswered() {
+        String withSpace = "rm -rf /Users/benny/ tmp_build_artifacts_cache_2026";
+        String withoutSpace = "rm -rf /Users/benny/tmp_build_artifacts_cache_2026";
+        check(!PermissionCard.drawnWhole(withSpace, 2), "a line wrapped at its space can't be answered");
+        check(!PermissionCard.drawnWhole(withoutSpace, 2), "nor its twin, wrapped after the slash");
+        check(PermissionCard.drawnWhole(withSpace, 1), "the same line drawn in one row can");
+        check(PermissionCard.drawnWhole("echo one\necho two", 2), "two lines in two rows can");
+        check(!PermissionCard.drawnWhole("echo one\necho two", 3), "two lines in three rows can't");
+        PermissionCard card = new PermissionCard();
+        card.offer("n1");
+        check(!card.canAnswer(true, "n1", false), "both buttons stay off for a card that wrapped a line");
+        check(card.canAnswer(true, "n1", true), "and come on once it drew whole");
+        check(card.offers("n1") && !card.offers("n2") && !card.offers(null), "only the offered request is offered");
     }
 
     private static void whatTellsTheLinkAnAnswerArrived() {

