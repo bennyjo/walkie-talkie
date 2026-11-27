@@ -44,7 +44,7 @@ final class PermissionCard {
     /**
      * Whether a tap may answer: the link is up, nothing has been answered yet, the request on the card is
      * still the one offered, so a tap can't sign a request that came in after the card was drawn, and the
-     * card drew every line of it whole.
+     * card drew it whole.
      */
     synchronized boolean canAnswer(boolean connected, String drawn, boolean whole) {
         return connected && whole && offered != null && answered == null && offered.equals(drawn);

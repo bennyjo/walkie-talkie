@@ -165,7 +165,7 @@ public class MainActivity extends Activity {
     private long switchingSince;
     private String declined;   // the confirmation last turned down here
     private String drawnPermission; // the challenge of the request the card shows, which a tap answers
-    private boolean drawnWhole;     // and whether the card drew each of its lines without wrapping
+    private boolean drawnWhole;     // and whether the card drew each part as one unwrapped line
     private CancellationSignal promptCancel; // closes the fingerprint prompt that's up
     private String notice;     // good news during a call, such as the session it moved to
     private long noticeSince;
@@ -1295,7 +1295,7 @@ public class MainActivity extends Activity {
         return layout != null && words.contentEquals(layout.getText());
     }
 
-    /** Whether the view, laid out with these words, drew them with no line wrapped. */
+    /** Whether the view, laid out with these words, drew them as one line in one row. */
     private static boolean drawnWhole(TextView view, String words) {
         return PermissionCard.drawnWhole(words, view.getLayout().getLineCount());
     }
