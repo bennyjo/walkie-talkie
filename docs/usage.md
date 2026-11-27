@@ -15,6 +15,8 @@ Every call takes a fingerprint, and the fingerprint lets the phone talk to that 
 
 **Mic**, on the app's home screen and on the call screen, chooses what a call listens on. The app keeps the choice for later calls. Changed during a call, it moves the call to that mic.
 
+**Mic** lists only the mics connected now, and the list follows them as they connect and disconnect: the USB mic while a USB audio input is plugged in, the headphones' mic while Bluetooth headphones with a mic are connected, and the phone's mic always. While the mic you chose isn't connected, a call uses the phone's mic, and **Mic** shows that. Your choice comes back when its mic is connected again. If it disconnects during a call, you hear the warning tone and a short sentence, such as "No USB mic, so I'm listening on the phone's mic."
+
 | Mic | Use it with | Replies play | Keep in mind |
 | --- | --- | --- | --- |
 | **USB mic**, the default | A USB audio input, such as a wireless collar mic's USB receiver | In Bluetooth headphones | The clearest sound. A collar mic hears you far louder than anyone nearby |
@@ -185,7 +187,7 @@ A call also ends, and the next call takes a new fingerprint, when:
 | What happens | What you notice |
 | --- | --- |
 | You say only "hang up", "hangup", or "hang it up", paused or not | You hear "Hanging up.", then the warning tone. The words never reach the session. A sentence that merely contains them, such as "Please don't hang up yet", goes to the session as a prompt |
-| The Bluetooth headphones disconnect, including when their battery runs out | The call ends at once, with no tone, and the app says the earbuds disconnected. Losing the USB mic doesn't end the call. A call on the phone's speaker, with no headphones connected, doesn't end this way |
+| The Bluetooth headphones disconnect, including when their battery runs out | The call ends at once, with no tone, and the app says the earbuds disconnected. Losing the USB mic doesn't end the call: it moves to the phone's mic. A call on the phone's speaker, with no headphones connected, doesn't end this way |
 | Nothing is said or heard for 30 minutes. A reply that's still coming counts as something | You hear "Nothing was said for 30 minutes, so I ended the call," then the warning tone |
 | The phone has been out of reach for 2 minutes | When the phone is back, you hear the warning tone, and the app says the call ended while the phone was away |
 | The session ends, or someone types `/clear` in it | You hear that the session has gone or ended the call |
