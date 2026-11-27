@@ -1,5 +1,6 @@
 # Temporary toolchains, models, and build output. Nothing here is ever committed.
 .toolchain/
+.emu-sdk/
 .scratch/
 gateway/.venv/
 __pycache__/

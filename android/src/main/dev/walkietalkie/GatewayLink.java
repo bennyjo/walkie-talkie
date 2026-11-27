@@ -136,6 +136,7 @@ final class GatewayLink {
     private JSONObject approve;     // the fingerprint's signature, until a login has carried it
     private JSONObject unconfirmedTap;
     private JSONObject unconfirmedVoice;
+    private JSONObject unconfirmedPermission; // an answer, until the gateway withdraws the request it answers
     private long micSeq;
     private volatile long lastSpeechSeq;
     private volatile boolean running;
@@ -224,13 +225,17 @@ final class GatewayLink {
         }
     }
 
-    /** A tap or a voice choice is kept until the gateway confirms it, and sent again after a reconnect. */
+    /**
+     * A tap, a voice choice, or a permission answer is kept until the gateway confirms it, and sent again
+     * after a reconnect, so an answer given while the link was dying isn't lost.
+     */
     void sendControl(JSONObject message) {
         synchronized (lock) {
             if (!running) return;
             String kind = message.optString("t");
             if (kind.equals("tap")) unconfirmedTap = message;
             if (kind.equals("voice")) unconfirmedVoice = message;
+            if (kind.equals("permission")) unconfirmedPermission = message;
             if (connected) outgoing.offer(controlFrame(message));
         }
     }
@@ -245,6 +250,10 @@ final class GatewayLink {
             if (kind.equals("voices") && unconfirmedVoice != null
                     && unconfirmedVoice.optString("id").equals(message.optString("chosen"))) {
                 unconfirmedVoice = null;
+            }
+            if (kind.equals("permission") && unconfirmedPermission != null && PermissionCard.withdraws(
+                    unconfirmedPermission.optString("nonce"), message.isNull("nonce") ? null : message.optString("nonce"))) {
+                unconfirmedPermission = null;
             }
         }
     }
@@ -388,6 +397,7 @@ final class GatewayLink {
             connected = true;
             if (unconfirmedTap != null) outgoing.offer(controlFrame(unconfirmedTap));
             if (unconfirmedVoice != null) outgoing.offer(controlFrame(unconfirmedVoice));
+            if (unconfirmedPermission != null) outgoing.offer(controlFrame(unconfirmedPermission));
             if (up < 0) {
                 micFrames.clear();
             } else {

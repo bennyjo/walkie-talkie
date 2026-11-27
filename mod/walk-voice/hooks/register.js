@@ -16,7 +16,7 @@
 // after GRANT_MS at most, and with a reload. Then the next Start takes a new
 // fingerprint.
 //
-// Inbound: the gateway answers a long poll with an order: submit, abort, type, or confirm.
+// Inbound: the gateway answers a long poll with an order: submit, abort, type, confirm, or permission.
 // Outbound: only for the session the phone chose, and only for turns that answer
 // the owner: text pieces, turn ends, and order results.
 //
@@ -25,12 +25,15 @@
 // running turn, can fold several prompts into one turn, and says nothing until the
 // prompt leaves the queue, so the speaker can't tell queued from lost.
 //
-// This mod approves nothing, and it never touches a permission dialog.
+// A permission dialog that a spoken turn opens is also offered to the phone. The keyboard can
+// still answer it, and whichever answers first counts. The phone's answer counts only with a
+// fingerprint over that one request, which this mod checks, and it can only allow once or deny:
+// it never adds a rule or changes the mode. Nothing else here approves anything.
 //
 // A session the front-desk launcher starts takes the role in front-desk.js instead of turns.
 
 import { deskTap, fileYes, startDesk, takePrompt } from './front-desk.js'
-import { verify } from './p256.js'
+import { sha256, verify } from './p256.js'
 
 const NAME = 'walk-voice'
 const POLL_EVERY_MS = 200
@@ -41,6 +44,15 @@ const GRANT_MS = 4 * 60 * 60 * 1000 // the longest a fingerprint lasts, as the p
 const IDLE_MS = 31 * 60 * 1000 // the gateway ends a run after 30 minutes with nothing said; this backs it up
 const CONNECTED = 'Walkie-talkie connected after a fingerprint on the phone. Spoken words now reach this session.'
 const ENDED = 'Walkie-talkie ended.'
+const MAX_PERMISSION_LINES = 2 // the tool's line and one more: on the card, a line break looks just like a wrap
+const MAX_PERMISSION_LINE = 30 // and per line, which a 360 dp phone draws unwrapped, since a wrap can hide a space
+const SHOWN_FIELDS = ['command', 'file_path', 'notebook_path', 'url', 'path']
+const NAP = ['/bin/sleep', '2'] // a hook's own time is capped, and a wait on a process doesn't count toward it
+// Tools whose dialog is the call itself, a question or a plan to approve: a hook's allow doesn't close it.
+const PERSON_ONLY = new Set(['AskUserQuestion', 'ExitPlanMode'])
+// As the keyboard's No says it. The turn goes on, so the model can say so: a stop here could end a
+// turn the keyboard had already let go on, since the engine stops it however the race went.
+export const DENIED_FROM_PHONE = `The user denied this from the walkie-talkie app, so it did not run. Stop what you are doing and wait for the user to tell you how to proceed.`
 
 // Turns the session starts by itself: a background task's notice, or an orchestrator's doorbell.
 const MACHINE_PROMPT = /^\s*(<task-notification>|: Firstmate operational input waiting:)/
@@ -100,6 +112,8 @@ const seenOrders = new Set() // so an order the gateway sends twice runs once
 let outbox = []
 let sending = false
 let isDesk = false // this session has the front-desk role, because the launcher started it for that
+let asks = [] // { id, tool, input }: the spoken turn's calls the engine put to a person, not yet matched to a request
+let permissions = [] // { request, call, text, settle }: requests waiting for the phone, the first one offered
 
 function request($, path, body) {
   return $.http.fetch(`http://walkie${path}`, {
@@ -263,6 +277,7 @@ function letGo() {
   const pending = inFlight && startingOrder !== null ? 1 : 0
   spokenTurn = null
   stopAtStart = ownerPrompts = Math.max(stopAtStart, pending)
+  settlePermissions()
 }
 
 function promptRefused() {
@@ -341,7 +356,7 @@ async function pollOnce($) {
       seenOrders.add(order.id)
       if (seenOrders.size > MAX_SEEN_ORDERS) seenOrders.delete(seenOrders.values().next().value)
     }
-    if (chosen && (order.submit || order.abort !== undefined || order.type || order.confirm)) active($)
+    if (chosen && (order.submit || order.abort !== undefined || order.type || order.confirm || order.permission)) active($)
     if (isDesk) {
       if (order.abort !== undefined) deskTap($, order.id)
       if (order.submit && chosen) takePrompt($, order.id, order.submit, order.unheard === true)
@@ -351,6 +366,7 @@ async function pollOnce($) {
     if (order.abort !== undefined) await abortTurn($, order.id, order.abort)
     if (order.submit && chosen) submit($, order.id, order.submit, order.unheard === true)
     if (order.type && chosen) void typeIntoTerminal($, order.id, order.type)
+    if (order.permission && chosen) await answerPermission($, order.id, order.permission)
   } catch {
     // The gateway is off, or the socket changed hands. The grant ends, and a gateway that answers
     // next hears that this session holds none. Try again soon.
@@ -495,6 +511,120 @@ async function ownTerminal($) {
   }
 }
 
+// The phone sees the whole call, exactly as it would run, so a fingerprint approves only what it
+// showed: the one field the tool acts on, beside nothing but a command's own label, or else every
+// argument. A call it can't show whole, such as a write's content, a cut command, or one that could
+// draw differently than it runs, has none.
+function describeRequest(tool, input) {
+  const args = input !== null && typeof input === 'object' ? input : {}
+  const field = SHOWN_FIELDS.find((key) => typeof args[key] === 'string')
+  const label = tool === 'Bash' ? 'description' : null
+  if (field && Object.keys(args).some((key) => key !== field && key !== label)) return null
+  const detail = field ? args[field] : JSON.stringify(args) === '{}' ? '' : JSON.stringify(args)
+  const text = detail ? `Allow ${tool}?\n${detail}` : `Allow ${tool}?`
+  return drawsAsItRuns(text) ? text : null
+}
+
+// Only printable ASCII and the newline after the tool's line: anything else can draw in another
+// order, look like another letter, or draw as nothing, and a tab can draw as a gap of a few pixels.
+// One line of what the call acts on, because on the card a line break looks just like a wrapped line.
+// Short lines, because a space where the phone wraps a line isn't drawn; the app also keeps its
+// buttons off for any line it has to wrap. And no trailing space. As security.draws_as_it_runs in the
+// gateway.
+export function drawsAsItRuns(text) {
+  const lines = text.split('\n')
+  return (
+    /^[\x20-\x7e\n]*$/.test(text) &&
+    lines.length <= MAX_PERMISSION_LINES &&
+    lines.every((line) => line.length > 0 && line.length <= MAX_PERMISSION_LINE && !line.endsWith(' '))
+  )
+}
+
+// The ask the engine raised for this request: PermissionRequest names no call, so it's the oldest
+// ask for this tool, with these arguments when there's a choice. None, and the phone isn't asked.
+function takeAsk(tool, input) {
+  const same = asks.filter((ask) => ask.tool === tool)
+  const exact = same.length > 1 ? same.filter((ask) => ask.input === JSON.stringify(input)) : same
+  const ask = exact[0]
+  if (ask) asks.splice(asks.indexOf(ask), 1)
+  return ask
+}
+
+function offerPermission($) {
+  const first = permissions[0]
+  if (first) post($, 'permission', { request: first.request, text: first.text })
+}
+
+// The request is answered, at the keyboard or the phone, or has gone. The phone forgets it, and
+// hears of the next one.
+function withdrawPermission($, permission) {
+  const at = permissions.indexOf(permission)
+  if (at < 0) return
+  permissions.splice(at, 1)
+  if (at > 0) return
+  post($, 'permission-gone', { request: permission.request })
+  offerPermission($)
+}
+
+// Requests whose call has moved on: the keyboard answered, or the turn ended. Each hook stands back.
+function settlePermissions(call) {
+  for (const permission of permissions) if (call === undefined || permission.call === call) permission.settle(null)
+  if (call === undefined) asks = []
+}
+
+// Holds the dialog's hook until the phone answers or the request goes. The dialog stays open at the
+// keyboard meanwhile, and the engine takes whichever answer comes first, so a late answer here does
+// nothing. A stopped turn ends the wait by aborting the process it's waiting on.
+async function askPhone($, call, tool, text, beneath) {
+  let settle
+  const answered = new Promise((resolve) => {
+    settle = resolve
+  })
+  const permission = { request: newNonce(), call, tool, text, settle }
+  permissions.push(permission)
+  if (permissions.length === 1) offerPermission($)
+  try {
+    for (;;) {
+      const nap = $.process.run(NAP, { timeoutMs: 10000 }).then(() => undefined)
+      nap.catch(() => {})
+      const decision = await Promise.race([answered, nap])
+      if (decision !== undefined) return decision ? { ...beneath, decision } : beneath
+    }
+  } catch {
+    return beneath
+  } finally {
+    withdrawPermission($, permission)
+  }
+}
+
+// What the phone signs to answer a request: as security.permission_message.
+export function permissionMessage(gatewayNonce, request, decision, text) {
+  const digest = Array.from(sha256(new TextEncoder().encode(text)), (b) => b.toString(16).padStart(2, '0')).join('')
+  return ['walkie-permission', gatewayNonce, request, decision, digest].join('|')
+}
+
+// The phone's answer, which counts only with a fingerprint over this request and this decision, and
+// only while the request still waits: once answered at the keyboard, it does nothing, and says so.
+async function answerPermission($, id, answer) {
+  const permission = permissions.find((waiting) => waiting.request === answer?.request)
+  if (!permission) return post($, 'order', { id, gone: true })
+  const { decision, nonce: gatewayNonce, sig } = answer
+  const ok =
+    (decision === 'allow' || decision === 'deny') &&
+    [gatewayNonce, sig].every((part) => typeof part === 'string' && part && !part.includes('|')) &&
+    verify(
+      (await $.fs.read(`${stateDir}/phone.pub`).catch(() => '')).trim(),
+      permissionMessage(gatewayNonce, permission.request, decision, permission.text),
+      sig,
+    )
+  if (!ok) return post($, 'order', { id, error: 'signature' })
+  if (!permissions.includes(permission)) return post($, 'order', { id, gone: true })
+  permission.settle(decision === 'allow' ? { behavior: 'allow' } : { behavior: 'deny', message: DENIED_FROM_PHONE })
+  // Only for Bash does this mod hear the keyboard's answer the moment it comes. For another tool,
+  // the keyboard may have answered first, and the engine then drops this one.
+  post($, 'order', permission.tool === 'Bash' ? { id, ok: true, sure: true } : { id, ok: true })
+}
+
 async function realPath($, path) {
   return (await $.fs.stat(path, { resolve: true }).catch(() => null))?.realPath ?? null
 }
@@ -557,6 +687,7 @@ export function register(on) {
     // A /clear ends one transcript, not this process: the running turn is gone, the connection stays.
     runningTurn = null
     forgetOwnerTurns()
+    settlePermissions()
     if (e.reason === 'clear' && grant) {
       endGrant($) // a new conversation: the phone chose the old one
       post($, 'grant-ended', { reason: 'clear' })
@@ -617,6 +748,8 @@ export function register(on) {
   })
 
   on('turn.step', async function* ($, e, next) {
+    // A new step of the main loop: every call of the steps before it has had its answer.
+    if (e.agentId === undefined) settlePermissions()
     let block = null
     for await (const chunk of next(e)) {
       if (e.agentId === undefined && e.turnId === spokenTurn && chunk.kind === 'text') {
@@ -642,13 +775,48 @@ export function register(on) {
     return ran
   })
 
+  // Only the spoken turn's own calls, which the engine put to a person: a subagent's dialog, a
+  // question, a plan, a call the phone can't show whole, or a dialog that can't be matched to its
+  // call, is only announced.
+  on('tool.check', async ($, e, next) => {
+    const verdict = await next(e)
+    if (spokenTurn && chosen && verdict.decision === 'ask' && e.approver === 'person' && e.agentId === undefined && e.tool_use_id) {
+      asks.push({ id: e.tool_use_id, tool: e.tool, input: JSON.stringify(e.input) })
+    }
+    return verdict
+  })
+
   on('classic.PermissionRequest', async ($, e, next) => {
-    if (spokenTurn) post($, 'permission', {})
+    const beneath = await next(e)
+    const ask = e.agent_id === undefined ? takeAsk(e.tool_name, e.tool_input) : undefined
+    if (!spokenTurn || beneath.decision) return beneath // another hook answered, so no dialog opens
+    const text = ask && chosen && !PERSON_ONLY.has(e.tool_name) ? describeRequest(e.tool_name, e.tool_input) : null
+    if (text === null) {
+      post($, 'permission', {})
+      return beneath
+    }
+    return askPhone($, ask.id, e.tool_name, text, beneath)
+  })
+
+  // The keyboard allowed the call, so the phone's answer would come too late.
+  on('tool.run', { tool: 'Bash' }, async ($, e, next) => {
+    settlePermissions(e.tool_use_id)
+    return next(e)
+  })
+
+  on('classic.PostToolUse', async ($, e, next) => {
+    settlePermissions(e.tool_use_id)
+    return next(e)
+  })
+
+  on('classic.PostToolUseFailure', async ($, e, next) => {
+    settlePermissions(e.tool_use_id)
     return next(e)
   })
 
   on('turn.complete', async ($, e, next) => {
     if (e.agentId === undefined) {
+      settlePermissions()
       if (runningTurn === e.turnId) runningTurn = null
       if (spokenTurn === e.turnId) {
         spokenTurn = null

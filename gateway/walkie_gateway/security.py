@@ -41,6 +41,8 @@ FAILURE_WINDOW = 60
 FAILURE_LOCKOUT = 60
 PAIRING_DAYS = 30       # then the phone pairs again, at the Mac
 PHONE_FILE = "phone.json"
+MAX_PERMISSION_LINES = 2    # the tool's line and one more: on the card, a line break looks just like a wrap
+MAX_PERMISSION_LINE = 30    # and per line, which a 360 dp phone draws unwrapped, since a wrap can hide a space
 PHONE_KEY_FILE = "phone.pub"  # the phone's public key, which the mod reads to check a choice
 
 
@@ -177,6 +179,28 @@ def start_message(nonce, run, instance, mod_nonce):
 def confirm_message(nonce, spoken):
     """What the phone signs to confirm a read-back: the gateway's challenge and the words the owner heard."""
     return "|".join(("walkie-confirm", nonce, hashlib.sha256(spoken.encode()).hexdigest()))
+
+
+def draws_as_it_runs(text):
+    """Whether the app can show these words exactly as they run, as drawsAsItRuns in the mod checks.
+
+    Only printable ASCII and the newline after the tool's line: anything else can draw in another order,
+    look like another letter, or draw as nothing, and a tab can draw as a gap of a few pixels. One line of
+    what the call acts on, because on the card a line break looks just like a wrapped line. Short lines,
+    because a space where the phone wraps a line isn't drawn; the app also keeps its buttons off for any
+    line it has to wrap. And no trailing space.
+    """
+    if not isinstance(text, str) or not all(" " <= c <= "~" or c == "\n" for c in text):
+        return False
+    lines = text.split("\n")
+    return len(lines) <= MAX_PERMISSION_LINES and all(
+        0 < len(line) <= MAX_PERMISSION_LINE and not line.endswith(" ") for line in lines)
+
+
+def permission_message(nonce, request, decision, text):
+    """What the phone signs to answer a permission request: the gateway's challenge, the session's own
+    name for the request, allow or deny, and the words the app showed."""
+    return "|".join(("walkie-permission", nonce, request, decision, hashlib.sha256(text.encode()).hexdigest()))
 
 
 def signed(key_text, message, signature):

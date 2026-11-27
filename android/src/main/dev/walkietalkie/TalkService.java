@@ -47,6 +47,7 @@ public class TalkService extends Service implements GatewayLink.Listener, Speake
     static final String ACTION_VOICE = "dev.walkietalkie.VOICE";
     static final String ACTION_CONFIRMED = "dev.walkietalkie.CONFIRMED";
     static final String ACTION_DECLINED = "dev.walkietalkie.DECLINED";
+    static final String ACTION_PERMISSION = "dev.walkietalkie.PERMISSION";
     static final String ACTION_SWITCH = "dev.walkietalkie.SWITCH";
     static final String ACTION_MIC = "dev.walkietalkie.MIC";
     static final String ACTION_TAP = "dev.walkietalkie.TAP";
@@ -56,6 +57,7 @@ public class TalkService extends Service implements GatewayLink.Listener, Speake
     static final String EXTRA_NAME = "name";
     static final String EXTRA_NONCE = "nonce";
     static final String EXTRA_SIG = "sig";
+    static final String EXTRA_DECISION = "decision";
     static final String EXTRA_SESSION = "session";
 
     private static final String TAG = "walkie";
@@ -63,6 +65,7 @@ public class TalkService extends Service implements GatewayLink.Listener, Speake
     private static final String CONFIRM_CHANNEL = "confirm";
     private static final int NOTIFICATION = 1;
     private static final int CONFIRM_NOTIFICATION = 2;
+    private static final int PERMISSION_NOTIFICATION = 3;
     private static final long STOP_AFTER_TONE_MS = 700;
     private static final long MAX_RUN_MS = 4 * 60 * 60 * 1000L; // a forgotten microphone stops by itself
     private static final long CHECK_EVERY_MS = 1000;
@@ -95,6 +98,8 @@ public class TalkService extends Service implements GatewayLink.Listener, Speake
         volatile String run;        // this run, which a fingerprint signs again to switch sessions
         volatile int pairingDays = -1;
         volatile JSONObject confirm; // a read-back waiting for a fingerprint, or null
+        volatile JSONObject permission; // the session's permission request, waiting for an answer here, or null
+        final PermissionCard card = new PermissionCard(); // that request, and an answer on its way
         volatile boolean pairingOver; // the Mac wants this phone to pair again
         volatile boolean replying;   // a reply is sounding in the earbuds
         volatile boolean hearing;    // the mic hears someone speak
@@ -173,6 +178,8 @@ public class TalkService extends Service implements GatewayLink.Listener, Speake
             if (started) tapped();
         } else if (ACTION_CONFIRMED.equals(action) || ACTION_DECLINED.equals(action)) {
             if (started) answerConfirm(intent, ACTION_CONFIRMED.equals(action));
+        } else if (ACTION_PERMISSION.equals(action)) {
+            if (started) answerPermission(intent);
         } else if (ACTION_START.equals(action) && !started) {
             begin(intent);
         }
@@ -249,6 +256,8 @@ public class TalkService extends Service implements GatewayLink.Listener, Speake
         status.sessions = null;
         status.voices = null;
         status.confirm = null;
+        status.permission = null;
+        status.card.offer(null);
         status.session = intent.getStringExtra(EXTRA_NAME);
         status.run = run;
         link.start();
@@ -264,12 +273,15 @@ public class TalkService extends Service implements GatewayLink.Listener, Speake
         status.running = false;
         status.connected = false;
         status.confirm = null;
+        status.permission = null;
+        status.card.offer(null);
         status.run = null;
         status.replying = false;
         status.hearing = false;
         status.problem = null;
         status.onSpeaker = false;
         getSystemService(NotificationManager.class).cancel(CONFIRM_NOTIFICATION);
+        getSystemService(NotificationManager.class).cancel(PERMISSION_NOTIFICATION);
         if (voice != null) voice.close();
         if (mic != null) mic.stop();
         if (speaker != null) speaker.stop();
@@ -619,6 +631,9 @@ public class TalkService extends Service implements GatewayLink.Listener, Speake
             case "confirm":
                 showConfirm(message.isNull("nonce") ? null : message);
                 break;
+            case "permission":
+                showPermission(message.isNull("nonce") ? null : message);
+                break;
             case "voices":
                 status.voices = message;
                 break;
@@ -723,9 +738,28 @@ public class TalkService extends Service implements GatewayLink.Listener, Speake
         boolean tapped = target != null && target.optString("id").equals(tappedSwitch);
         tappedSwitch = null;
         if (tapped) return; // the app is open, and already asking
+        notifyWaiting(CONFIRM_NOTIFICATION);
+    }
+
+    /** A permission dialog in the session, which the app can answer. The notification says only that something waits. */
+    private void showPermission(JSONObject permission) {
+        boolean again = permission != null && status.card.shown()
+                && permission.optString("nonce").equals(status.permission == null ? null : status.permission.optString("nonce"));
+        status.permission = permission;
+        status.card.offer(permission == null ? null : permission.optString("nonce"));
+        if (again) return; // offered again after a reconnect: the owner already knows
+        if (permission == null) {
+            getSystemService(NotificationManager.class).cancel(PERMISSION_NOTIFICATION);
+            return;
+        }
+        notifyWaiting(PERMISSION_NOTIFICATION);
+    }
+
+    private void notifyWaiting(int id) {
+        NotificationManager nm = getSystemService(NotificationManager.class);
         nm.createNotificationChannel(new NotificationChannel(CONFIRM_CHANNEL, "Confirmations", NotificationManager.IMPORTANCE_HIGH));
         PendingIntent open = PendingIntent.getActivity(this, 2, new Intent(this, MainActivity.class), PendingIntent.FLAG_IMMUTABLE);
-        nm.notify(CONFIRM_NOTIFICATION, new Notification.Builder(this, CONFIRM_CHANNEL)
+        nm.notify(id, new Notification.Builder(this, CONFIRM_CHANNEL)
                 .setSmallIcon(R.drawable.ic_notification)
                 .setColor(getColor(R.color.accent))
                 .setContentTitle("Walkie Talkie")
@@ -734,6 +768,24 @@ public class TalkService extends Service implements GatewayLink.Listener, Speake
                 .setContentIntent(open)
                 .setAutoCancel(true)
                 .build());
+    }
+
+    /**
+     * Approve or Deny, signed with a fingerprint in the app, for the request still waiting. The card stays,
+     * with its buttons waiting, until the gateway withdraws the request, which says the answer arrived. The
+     * link sends the answer again after a reconnect.
+     */
+    private void answerPermission(Intent intent) {
+        if (!status.card.answer(intent.getStringExtra(EXTRA_NONCE))) return;
+        String nonce = intent.getStringExtra(EXTRA_NONCE);
+        try {
+            send(new JSONObject()
+                    .put("nonce", nonce)
+                    .put("decision", intent.getStringExtra(EXTRA_DECISION))
+                    .put("sig", intent.getStringExtra(EXTRA_SIG)), "permission");
+        } catch (JSONException e) {
+            Log.e(TAG, "bad message");
+        }
     }
 
     private void answerConfirm(Intent intent, boolean confirmed) {

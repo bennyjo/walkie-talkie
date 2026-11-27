@@ -280,5 +280,26 @@ class MacTest(unittest.TestCase):
         self.assertNotEqual(security.phone_mac(token, "s", "c"), security.phone_mac("cd" * 32, "s", "c"))
 
 
+class PermissionMessageTest(unittest.TestCase):
+    # The same fixed example the mod's and the app's tests check, so the three can't drift apart.
+    EXAMPLE = ("walkie-permission|0123456789abcdef0123456789abcdef|fedcba9876543210fedcba9876543210"
+               "|allow|de6f9c5a83c5800a7ae1db3f2af48c7ed0b1e932913f12ae8760726df14b1787")
+
+    def test_the_signed_message_matches_the_fixed_example(self):
+        self.assertEqual(security.permission_message("0123456789abcdef0123456789abcdef", "fedcba9876543210fedcba9876543210",
+                                                     "allow", "Allow Bash?\nls -l build"), self.EXAMPLE)
+
+    def test_only_words_that_draw_as_they_run_are_shown(self):
+        self.assertTrue(security.draws_as_it_runs("Allow Bash?\nls -l build"))
+        self.assertTrue(security.draws_as_it_runs("x" * 30 + "\n" + "x" * 30))  # the limits exactly
+        for text in ("Allow Bash?\n\u05d0=1; rm -rf ~", "Allow Bash?\ncaf\u00e9", "Allow Bash?\n\r", "x" * 31,
+                     "a\nb\nc", "Allow Bash?\nrm -rf /Users/benny/\ntmp_build_artifacts_cache_2026",
+                     "a\n\nb", "a \nb", "a\t", "a\n", "\na", None,
+                     "rm -rf ~/proj/build\t~", "rm -rf /Users/benny/ tmp_build_artifacts_cache_2026",
+                     "rm -rf /Users/benny/tmp_build_artifacts_cache_2026"):
+            with self.subTest(text=text):
+                self.assertFalse(security.draws_as_it_runs(text))
+
+
 if __name__ == "__main__":
     unittest.main()
