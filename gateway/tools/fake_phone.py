@@ -83,6 +83,7 @@ class FakePhone:
     def __init__(self, host, port, token, key=None, confirm=False, permission=None):
         self.host, self.port, self.token, self.key, self.confirm = host, port, token, key, confirm
         self.permission = permission  # how to answer a permission request: allow, deny, or None to leave it
+        self.answered = False   # this clip's permission request has been answered
         self.run = secrets.token_hex(16)
         self.seal = None        # this connection's encryption, as the app's: made at login
         self.nonce = None
@@ -186,6 +187,7 @@ class FakePhone:
                                                              message["text"])
                         self.send({"t": "permission", "nonce": message["nonce"], "decision": self.permission,
                                    "sig": sign(self.key, signed)})
+                        self.answered = True
                 self.events.append((now, message["t"] + ":" + str(message.get("kind", ""))))
 
     def _leak(self, packet):
@@ -322,6 +324,7 @@ async def main():
     for path in args.say:
         phone.speech.clear()
         phone.events.clear()
+        phone.answered = False
         clip = load_wav(path)
         await phone.send_mic(clip)
         spoke = time.monotonic()
@@ -354,7 +357,10 @@ async def main():
                     end = time.monotonic() + args.wait
                 waiting_for_answer = talked and not (phone.cuts and phone.speech[-1][1] >= phone.cut_gen
                                                      and phone.speech[-1][0] > phone.cuts[-1])
-                if now > phone.speech[-1][0] + args.quiet_after and not waiting_for_answer:
+                # the heard notice comes before the session asks, so quiet then doesn't end the turn
+                waiting_for_permission = args.permission and not phone.answered
+                if now > phone.speech[-1][0] + args.quiet_after and not waiting_for_answer \
+                        and not waiting_for_permission:
                     break
         feeder.cancel()
         first = phone.speech[0][0] if phone.speech else None
