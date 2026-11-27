@@ -871,12 +871,12 @@ public class MainActivity extends Activity {
     /** Which mic a call listens on, of those connected now. A call on now moves to the new one. */
     private void chooseMicDialog() {
         int[] offered = micsOffered;
-        int inUse = MicChoice.inUse(TalkService.micChoice(this), offered);
+        int chosen = TalkService.micChoice(this);
         String[] names = new String[offered.length];
         int checked = -1;
         for (int i = 0; i < offered.length; i++) {
             names[i] = MIC_NAMES[offered[i]];
-            if (offered[i] == inUse) checked = i;
+            if (offered[i] == chosen) checked = i;
         }
         micDialog = new AlertDialog.Builder(this)
                 .setTitle("Mic")
@@ -892,8 +892,8 @@ public class MainActivity extends Activity {
                 .show();
     }
 
-    /** Follows the mics connected now, and redraws an open Mic list when one comes or goes. */
-    private int micInUse() {
+    /** The chosen mic. Follows the mics connected now, and redraws an open Mic list when one comes or goes. */
+    private int chosenMic() {
         int[] offered = TalkService.micsOffered(this);
         if (!Arrays.equals(offered, micsOffered)) {
             micsOffered = offered;
@@ -902,7 +902,7 @@ public class MainActivity extends Activity {
                 chooseMicDialog();
             }
         }
-        return MicChoice.inUse(TalkService.micChoice(this), micsOffered);
+        return TalkService.micChoice(this);
     }
 
     /** A tap on the dot stops a reply, as an earbud tap does, for when there are no earbuds to tap. */
@@ -1027,7 +1027,7 @@ public class MainActivity extends Activity {
         boolean listed = list != null && list.length() > 0;
         Ui.shown(homeMicRow, listed);
         Ui.shown(homeTip, listed);
-        int mic = micInUse();
+        int mic = chosenMic();
         show(homeMicValue, MIC_NAMES[mic]);
         show(homeTip, MIC_TIPS[mic]);
         Ui.shown(homeLine, starting || list != null && list.length() > 0);
@@ -1113,7 +1113,7 @@ public class MainActivity extends Activity {
         note(talkDays, daysLeft(status.pairingDays), false);
 
         renderSwitchList(status);
-        show(talkMicValue, MIC_NAMES[micInUse()]);
+        show(talkMicValue, MIC_NAMES[chosenMic()]);
 
         JSONObject voices = status.voices;
         JSONArray voiceList = voices == null ? null : voices.optJSONArray("list");

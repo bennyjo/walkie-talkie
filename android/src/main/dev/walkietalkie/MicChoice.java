@@ -16,10 +16,10 @@ package dev.walkietalkie;
  *
  * The app offers only the choices whose device is connected now: USB while a USB input is there, HEADSET while
  * Android offers a Bluetooth headset as a call's device, and PHONE always. A saved choice whose device isn't
- * connected is kept for when it comes back, and the phone's mic stands in until then.
+ * connected is kept, and sends nothing until its device is back.
  *
- * Any other route sends nothing and plays no reply: the phone's mic is sent only when it's the choice in use,
- * and its speaker plays a reply only then, with no headphones there.
+ * Any other route sends nothing and plays no reply, as before: the phone's mic is never sent unless it's the
+ * choice, and its speaker plays a reply only when the phone's mic is the choice and no headphones are there.
  */
 final class MicChoice {
     static final int USB = 0;
@@ -89,21 +89,18 @@ final class MicChoice {
         return choices;
     }
 
-    /** The choice in use: the saved one while it's offered, otherwise the phone's mic, which always is. */
-    static int inUse(int saved, int[] offered) {
-        int choice = valid(saved);
-        return contains(offered, choice) ? choice : PHONE;
-    }
-
     /**
-     * The plan for the saved choice, given the types of the inputs and outputs connected now, and of the devices
-     * Android offers as a call's device. It's the plan for the choice in use.
+     * The plan for a choice, given the types of the inputs and outputs connected now, and of the devices
+     * Android offers as a call's device.
      */
-    static Plan plan(int saved, int[] inputs, int[] outputs, int[] callDevices) {
-        switch (inUse(saved, offered(inputs, callDevices))) {
+    static Plan plan(int choice, int[] inputs, int[] outputs, int[] callDevices) {
+        switch (valid(choice)) {
             case HEADSET: {
-                int[] only = {first(HEADSET_ROUTES, callDevices)};
-                return new Plan(HEADSET, true, only[0], only, only, true);
+                int device = first(HEADSET_ROUTES, callDevices);
+                // No headset to call through: nothing may be sent, and replies still go to any headphones.
+                if (device < 0) return new Plan(HEADSET, false, -1, new int[0], EarbudRoutes.TYPES, true);
+                int[] only = {device};
+                return new Plan(HEADSET, true, device, only, only, true);
             }
             case PHONE:
                 if (first(EarbudRoutes.TYPES, outputs) >= 0) {

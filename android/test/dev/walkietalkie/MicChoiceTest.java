@@ -28,7 +28,6 @@ public final class MicChoiceTest {
     public static void main(String[] args) {
         usbMicIsTheDefault();
         onlyConnectedMicsAreOffered();
-        aChoiceWhoseDeviceIsGoneFallsBackToThePhonesMic();
         usbMicSendsOnlyTheUsbRouteAndPlaysOnlyInHeadphones();
         headsetMicTakesCallModeOnlyWithAHeadset();
         headsetMicPrefersLeAudio();
@@ -62,27 +61,6 @@ public final class MicChoiceTest {
         check(MicChoice.offered(NONE, NONE).length == 1, "the phone's mic is offered even unlisted");
     }
 
-    private static void aChoiceWhoseDeviceIsGoneFallsBackToThePhonesMic() {
-        int[] phoneOnly = {MicChoice.PHONE};
-        check(MicChoice.inUse(MicChoice.USB, phoneOnly) == MicChoice.PHONE, "no USB mic: the phone's mic");
-        check(MicChoice.inUse(MicChoice.HEADSET, phoneOnly) == MicChoice.PHONE, "no headset: the phone's mic");
-        check(MicChoice.inUse(MicChoice.USB, new int[] {MicChoice.HEADSET, MicChoice.PHONE}) == MicChoice.PHONE,
-                "a missing USB mic never falls back to call mode");
-        check(MicChoice.inUse(MicChoice.USB, new int[] {MicChoice.USB, MicChoice.PHONE}) == MicChoice.USB,
-                "the USB mic is back in use once it's connected again");
-        check(MicChoice.inUse(-1, phoneOnly) == MicChoice.PHONE, "an unknown saved choice is USB, so the phone's mic");
-
-        MicChoice.Plan headphones = MicChoice.plan(MicChoice.USB, WITH_HEADSET_IN, WITH_EARBUDS_OUT, HEADSET_CALL);
-        check(headphones.choice == MicChoice.PHONE && !headphones.call && headphones.talkOver,
-                "USB saved, headphones only: the phone's mic, with media quality");
-        check(MicChoice.allowed(headphones.mics, PHONE_MIC, WITH_HEADSET_IN), "the phone's mic is sent");
-        check(MicChoice.allowed(headphones.outputs, A2DP, WITH_EARBUDS_OUT), "replies play in the headphones");
-
-        MicChoice.Plan bare = MicChoice.plan(MicChoice.USB, PHONE_ONLY_IN, PHONE_ONLY_OUT, NONE);
-        check(bare.choice == MicChoice.PHONE && bare.onSpeaker() && !bare.talkOver,
-                "nothing connected: the phone's mic and speaker, with no talk-over");
-    }
-
     private static void usbMicSendsOnlyTheUsbRouteAndPlaysOnlyInHeadphones() {
         MicChoice.Plan plan = MicChoice.plan(MicChoice.USB, WITH_USB_IN, WITH_EARBUDS_OUT, HEADSET_CALL);
         check(!plan.call && plan.talkOver && !plan.onSpeaker(), "USB is media, with talk-over");
@@ -91,9 +69,9 @@ public final class MicChoiceTest {
         check(MicChoice.allowed(plan.outputs, A2DP, WITH_EARBUDS_OUT), "replies play in the earbuds");
         check(!MicChoice.allowed(plan.outputs, SPEAKER, WITH_EARBUDS_OUT), "never on the speaker");
 
-        MicChoice.Plan noEarbuds = MicChoice.plan(MicChoice.USB, WITH_USB_IN, PHONE_ONLY_OUT, NONE);
-        check(MicChoice.allowed(noEarbuds.mics, USB, WITH_USB_IN), "no earbuds: the USB mic is still sent");
-        check(!MicChoice.allowed(noEarbuds.outputs, SPEAKER, PHONE_ONLY_OUT), "no earbuds: replies are silent");
+        MicChoice.Plan bare = MicChoice.plan(MicChoice.USB, PHONE_ONLY_IN, PHONE_ONLY_OUT, NONE);
+        check(!MicChoice.allowed(bare.mics, PHONE_MIC, PHONE_ONLY_IN), "no USB mic: nothing is sent");
+        check(!MicChoice.allowed(bare.outputs, SPEAKER, PHONE_ONLY_OUT), "no earbuds: replies are silent");
     }
 
     private static void headsetMicTakesCallModeOnlyWithAHeadset() {
@@ -105,7 +83,9 @@ public final class MicChoiceTest {
         check(!MicChoice.allowed(plan.outputs, SPEAKER, new int[] {SPEAKER, SCO}), "a call on the speaker is silent");
 
         MicChoice.Plan none = MicChoice.plan(MicChoice.HEADSET, PHONE_ONLY_IN, WITH_EARBUDS_OUT, new int[] {1, SPEAKER});
-        check(!none.call && none.choice == MicChoice.PHONE, "no headset to call through: no call mode");
+        check(!none.call, "no headset to call through: no call mode");
+        check(!MicChoice.allowed(none.mics, PHONE_MIC, PHONE_ONLY_IN), "and nothing is sent");
+        check(MicChoice.allowed(none.outputs, A2DP, WITH_EARBUDS_OUT), "replies still reach headphones with no mic");
     }
 
     private static void headsetMicPrefersLeAudio() {

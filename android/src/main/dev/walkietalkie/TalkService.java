@@ -407,14 +407,11 @@ public class TalkService extends Service implements GatewayLink.Listener, Speake
 
     /**
      * Follows the mic choice and the devices connected now. A change between media and call mode needs new
-     * streams, because a stream's kind is fixed when it's made. When the chosen mic's device goes, the call
-     * moves to the phone's mic, and the phone says so.
+     * streams, because a stream's kind is fixed when it's made.
      */
     private void applyRoutes() {
         if (!started) return;
         MicChoice.Plan next = newPlan();
-        int chosen = micChoice(this);
-        boolean fellBack = next.choice != plan.choice && next.choice != chosen;
         boolean rebuild = next.call != plan.call;
         if (next.choice != plan.choice || next.call != plan.call || next.onSpeaker() != plan.onSpeaker()) {
             settleUntil = SystemClock.elapsedRealtime() + ROUTE_SETTLE_MS;
@@ -440,12 +437,6 @@ public class TalkService extends Service implements GatewayLink.Listener, Speake
             speaker.prefer(output());
         }
         checkRoutes();
-        if (fellBack) {
-            // Not one of the problems announce() follows, so a problem it clears doesn't cancel this sentence.
-            announced = null;
-            speaker.warnTone();
-            voice.say(fallBackSpoken(chosen, plan));
-        }
     }
 
     /**
@@ -533,12 +524,6 @@ public class TalkService extends Service implements GatewayLink.Listener, Speake
             default:
                 return "No USB mic, so I can't hear you.";
         }
-    }
-
-    /** The chosen mic's device went, so the call moved to the phone's mic. */
-    private static String fallBackSpoken(int chosen, MicChoice.Plan plan) {
-        String now = plan.onSpeaker() ? "the phone's mic and speaker" : "the phone's mic";
-        return (chosen == MicChoice.HEADSET ? "No headphones' mic" : "No USB mic") + ", so I'm listening on " + now + ".";
     }
 
     private static String listeningText(MicChoice.Plan plan) {
