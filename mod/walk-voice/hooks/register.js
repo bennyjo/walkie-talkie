@@ -44,7 +44,8 @@ const GRANT_MS = 4 * 60 * 60 * 1000 // the longest a fingerprint lasts, as the p
 const IDLE_MS = 31 * 60 * 1000 // the gateway ends a run after 30 minutes with nothing said; this backs it up
 const CONNECTED = 'Walkie-talkie connected after a fingerprint on the phone. Spoken words now reach this session.'
 const ENDED = 'Walkie-talkie ended.'
-const MAX_PERMISSION_TEXT = 1000 // what the phone shows of a permission request
+const MAX_PERMISSION_TEXT = 1000 // the most the phone shows of a permission request
+const SHOWN_FIELDS = ['command', 'file_path', 'notebook_path', 'url', 'path']
 const NAP = ['/bin/sleep', '2'] // a hook's own time is capped, and a wait on a process doesn't count toward it
 // Tools whose dialog is the call itself, a question or a plan to approve: a hook's allow doesn't close it.
 const PERSON_ONLY = new Set(['AskUserQuestion', 'ExitPlanMode'])
@@ -509,14 +510,16 @@ async function ownTerminal($) {
   }
 }
 
-// The phone sees the tool and what it acts on, as the dialog shows them, so a fingerprint approves
-// what was asked.
+// The phone sees the whole call, exactly as it would run, so a fingerprint approves only what it
+// showed: the one field the tool acts on, beside nothing but the model's own label, or else every
+// argument. A call it can't show whole, such as a write's content or a cut command, has none.
 function describeRequest(tool, input) {
   const args = input !== null && typeof input === 'object' ? input : {}
-  const what = ['command', 'file_path', 'notebook_path', 'url', 'path'].map((key) => args[key]).find((value) => typeof value === 'string')
-  const detail = what ?? (JSON.stringify(args) === '{}' ? '' : JSON.stringify(args))
+  const field = SHOWN_FIELDS.find((key) => typeof args[key] === 'string')
+  if (field && Object.keys(args).some((key) => key !== field && key !== 'description')) return null
+  const detail = field ? args[field] : JSON.stringify(args) === '{}' ? '' : JSON.stringify(args)
   const text = detail ? `Allow ${tool}?\n${detail}` : `Allow ${tool}?`
-  return text.length > MAX_PERMISSION_TEXT ? `${text.slice(0, MAX_PERMISSION_TEXT - 1)}\u2026` : text
+  return text.length > MAX_PERMISSION_TEXT ? null : text
 }
 
 // The ask the engine raised for this request: PermissionRequest names no call, so it's the oldest
@@ -753,7 +756,8 @@ export function register(on) {
   })
 
   // Only the spoken turn's own calls, which the engine put to a person: a subagent's dialog, a
-  // question, a plan, or a dialog that can't be matched to its call, is only announced.
+  // question, a plan, a call the phone can't show whole, or a dialog that can't be matched to its
+  // call, is only announced.
   on('tool.check', async ($, e, next) => {
     const verdict = await next(e)
     if (spokenTurn && chosen && verdict.decision === 'ask' && e.approver === 'person' && e.agentId === undefined && e.tool_use_id) {
@@ -766,11 +770,12 @@ export function register(on) {
     const beneath = await next(e)
     const ask = e.agent_id === undefined ? takeAsk(e.tool_name, e.tool_input) : undefined
     if (!spokenTurn || beneath.decision) return beneath // another hook answered, so no dialog opens
-    if (!ask || !chosen || PERSON_ONLY.has(e.tool_name)) {
+    const text = ask && chosen && !PERSON_ONLY.has(e.tool_name) ? describeRequest(e.tool_name, e.tool_input) : null
+    if (text === null) {
       post($, 'permission', {})
       return beneath
     }
-    return askPhone($, ask.id, describeRequest(e.tool_name, e.tool_input), beneath)
+    return askPhone($, ask.id, text, beneath)
   })
 
   // The keyboard allowed the call, so the phone's answer would come too late.

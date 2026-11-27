@@ -175,7 +175,7 @@ DRAFT_OPEN = Notice("draft-open", "That session has a half-typed draft, so I did
 NO_PANE = Notice("no-pane", "I can't reach that session's terminal, so I didn't type anything.")
 PERMISSION = Notice("permission",
                     "The session is asking for a permission. To approve or deny it, open the app and use your fingerprint.")
-PERMISSION_AT_KEYBOARD = Notice("permission-keyboard", "The session is asking for a permission at the keyboard.")
+PERMISSION_AT_KEYBOARD = Notice("permission-keyboard", "The session is asking for a permission at the keyboard. Answer it there.")
 APPROVED = Notice("approved", "Approved.")
 DENIED = Notice("denied", "Denied.")
 PERMISSION_GONE = Notice("permission-gone", "That permission was already answered, or has gone, so I sent nothing.")

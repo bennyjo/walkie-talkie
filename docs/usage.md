@@ -62,7 +62,14 @@ When a turn you started by voice asks for a permission, such as to run a command
 
 The dialog stays open at the keyboard, and whichever answers first counts. When it's answered at the keyboard, or the turn stops, the app's card goes. An answer from the app after that does nothing, and you hear "That permission was already answered, or has gone, so I sent nothing."
 
-Only the app answers, with your fingerprint: not your voice, an earbud tap, the lock screen, or the notification. A tap still stops the turn, and the request goes with it. A dialog that a subagent opens isn't offered in the app: you hear "The session is asking for a permission at the keyboard." Nor are a question the session asks you, or a plan for you to approve. When several dialogs are open, the app offers them one at a time, oldest first.
+Only the app answers, with your fingerprint: not your voice, an earbud tap, the lock screen, or the notification. A tap still stops the turn, and the request goes with it. The app offers a request only when it can show the whole call, exactly as it would run, so your fingerprint approves only what you saw. That covers a command, a file, URL, or path the tool acts on with nothing else beside it, such as a read of a whole file, and a call whose arguments the app can list in full, up to 1,000 characters in all. The following stay at the keyboard instead, and you hear "The session is asking for a permission at the keyboard. Answer it there.":
+
+- A call that carries more than the app shows, such as a write's content, an edit's change, or a notebook cell's source.
+- A call too long to show whole.
+- A dialog that a subagent opens.
+- A question the session asks you, or a plan for you to approve.
+
+When several dialogs are open, the app offers them one at a time, oldest first.
 
 ## Switch sessions
 
