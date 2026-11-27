@@ -1,5 +1,6 @@
 import { expect, mock, test } from 'claude-code/testing'
 import { curve, sha256, verify } from './hooks/p256.js'
+import { DENIED_FROM_PHONE } from './hooks/register.js'
 
 const SOCKET = '/home/me/.local/state/walkie-talkie/mod.sock'
 const PHONE_KEY_FILE = '/home/me/.local/state/walkie-talkie/phone.pub'
@@ -76,7 +77,11 @@ function world(
   on('session.id', () => ({ value: sessionId() }))
   on('session.cwd', () => ({ value: cwd() }))
   on('session.surfaces', () => ({ value: surfaces }))
-  on('process.run', (_, e) => run(e))
+  on('process.run', async (_, e) => {
+    if (e.argv[0] !== '/bin/sleep') return run(e)
+    await clock.sleep(Number(e.argv[1]) * 1000) // the wait a permission hook holds the dialog with
+    return { value: { exitCode: 0, stdout: '', stderr: '' } }
+  })
   on('fs.stat', (_, e) => stat(e.path) ?? { value: { kind: 'dir', size: 0, mtimeMs: 0, isLink: false, realPath: e.path.replace(/\/+$/, '') } })
   on('fs.read', (_, e) => {
     seen.reads.push(e.path)
@@ -1770,4 +1775,147 @@ test('a /clear ends the grant: the phone chose the conversation before it', asyn
   await clock.settle()
   expect(asPrompts(seen)).toEqual([])
   expect(seen.events).toContainEqual({ kind: 'grant-ended', reason: 'clear' })
+})
+
+// --- answering a permission dialog from the phone ---------------------------------------
+
+const RM = { command: 'rm -rf build' }
+
+// The engine puts the spoken turn's call to a person, and opens its dialog.
+async function spokenAsk($, on, clock, { id = 'call-1', input = RM, agentId } = {}) {
+  on('turn.start', (_, e) => ({ turnId: e.turnId }))
+  on('tool.check', () => ({ decision: 'ask' }))
+  on('classic.PermissionRequest', () => ({}))
+  on('classic.PostToolUse', () => ({}))
+  await $.session.start({ cwd: '/work/project', surface: 'terminal', isInteractive: true })
+  await clock.advance(200)
+  await clock.settle()
+  await $.turn.start({ text: 'clean the build', turnId: 'spoken' })
+  await $.tool.check({ tool: 'Bash', input, tool_use_id: id, approver: 'person', ...(agentId ? { agentId } : {}) })
+  return $.classic.PermissionRequest({ tool_name: 'Bash', tool_input: input, permission_suggestions: [], ...(agentId ? { agent_id: agentId } : {}) })
+}
+
+// The app's answer, which the gateway passes on: a fingerprint over the offered request and that answer.
+function phoneAnswer(seen, clock, decision, { key = PHONE, change = {}, signedDecision = decision } = {}) {
+  return async () => {
+    let offered
+    while (!(offered = seen.events.find((e) => e.kind === 'permission' && e.request))) await clock.sleep(200)
+    const digest = Array.from(sha256(new TextEncoder().encode(offered.text)), (b) => b.toString(16).padStart(2, '0')).join('')
+    const answer = { request: offered.request, nonce: 'gateway-nonce-2', decision, ...change }
+    answer.sig = await key.sign(['walkie-permission', answer.nonce, offered.request, signedDecision, digest].join('|'))
+    return { chosen: true, id: 9, permission: answer }
+  }
+}
+
+async function waitFor(clock, done) {
+  for (let i = 0; i < 50 && !done(); i++) await clock.advance(200)
+}
+
+test("a spoken turn's permission dialog is offered to the phone, with what it asks to do", async ($, on) => {
+  const { clock, seen } = world(on, { orders: [{ chosen: true, id: 4, submit: 'clean the build' }] })
+  void spokenAsk($, on, clock)
+  await waitFor(clock, () => seen.events.some((e) => e.kind === 'permission'))
+  expect(seen.events.find((e) => e.kind === 'permission')).toEqual({ kind: 'permission', request: expect.any(String), text: 'Allow Bash?\nrm -rf build' })
+})
+
+test('a fingerprint on Approve allows that one call, and adds no rule', async ($, on) => {
+  const { clock, seen, queue } = world(on, { orders: [{ chosen: true, id: 4, submit: 'clean the build' }] })
+  queue.push(phoneAnswer(seen, clock, 'allow'))
+  const answered = spokenAsk($, on, clock)
+  let result
+  void answered.then((value) => (result = value))
+  await waitFor(clock, () => result !== undefined)
+  expect(result).toEqual({ decision: { behavior: 'allow' } })
+  expect(seen.events).toContainEqual({ kind: 'order', id: 9, ok: true })
+})
+
+test('a fingerprint on Deny refuses the call, as the keyboard does, and leaves the turn to say so', async ($, on) => {
+  const { clock, seen, queue } = world(on, { orders: [{ chosen: true, id: 4, submit: 'clean the build' }] })
+  queue.push(phoneAnswer(seen, clock, 'deny'))
+  let result
+  void spokenAsk($, on, clock).then((value) => (result = value))
+  await waitFor(clock, () => result !== undefined)
+  expect(result).toEqual({ decision: { behavior: 'deny', message: DENIED_FROM_PHONE } })
+  expect(seen.events).toContainEqual({ kind: 'order', id: 9, ok: true })
+})
+
+for (const [name, options] of [
+  ['another key', { key: OTHER_PHONE }],
+  ['the other answer', { signedDecision: 'deny' }],
+  ['an answer that would change the rules', { change: { decision: 'always' }, signedDecision: 'always' }],
+]) {
+  test(`an answer signed with ${name} answers nothing`, async ($, on) => {
+    const { clock, seen, queue } = world(on, { orders: [{ chosen: true, id: 4, submit: 'clean the build' }] })
+    queue.push(phoneAnswer(seen, clock, 'allow', options))
+    let result
+    void spokenAsk($, on, clock).then((value) => (result = value))
+    await waitFor(clock, () => seen.events.some((e) => e.kind === 'order' && e.id === 9))
+    expect(seen.events).toContainEqual({ kind: 'order', id: 9, error: 'signature' })
+    expect(result).toBe(undefined) // still waiting, at the keyboard and the phone
+  })
+}
+
+test('once the keyboard has answered, the phone hears it went, and its answer does nothing', async ($, on) => {
+  const { clock, seen, queue } = world(on, { orders: [{ chosen: true, id: 4, submit: 'clean the build' }] })
+  let result
+  void spokenAsk($, on, clock).then((value) => (result = value))
+  await waitFor(clock, () => seen.events.some((e) => e.kind === 'permission'))
+  const offered = seen.events.find((e) => e.kind === 'permission')
+  await $.classic.PostToolUse({ tool_name: 'Bash', tool_input: RM, tool_response: {}, tool_use_id: 'call-1' })
+  await waitFor(clock, () => result !== undefined)
+  expect(result).toEqual({}) // the hook stood back, and the keyboard's answer stands
+  await clock.settle()
+  expect(seen.events).toContainEqual({ kind: 'permission-gone', request: offered.request })
+  queue.push(phoneAnswer(seen, clock, 'allow'))
+  await waitFor(clock, () => seen.events.some((e) => e.kind === 'order' && e.id === 9))
+  expect(seen.events).toContainEqual({ kind: 'order', id: 9, gone: true })
+})
+
+test('a stopped turn takes the request off the phone', async ($, on) => {
+  const { clock, seen } = world(on, { orders: [{ chosen: true, id: 4, submit: 'clean the build' }] })
+  on('turn.complete', (_, e) => ({ text: e.answer }))
+  let result
+  void spokenAsk($, on, clock).then((value) => (result = value))
+  await waitFor(clock, () => seen.events.some((e) => e.kind === 'permission'))
+  await finish($, 'spoken')
+  await waitFor(clock, () => result !== undefined)
+  await clock.settle()
+  expect(result).toEqual({})
+  expect(seen.events.some((e) => e.kind === 'permission-gone')).toBe(true)
+})
+
+test("a subagent's dialog is only announced, for the keyboard", async ($, on) => {
+  const { clock, seen } = world(on, { orders: [{ chosen: true, id: 4, submit: 'clean the build' }] })
+  const result = await spokenAsk($, on, clock, { agentId: 'agent-1' })
+  await clock.settle()
+  expect(result).toEqual({})
+  expect(seen.events.filter((e) => e.kind === 'permission')).toEqual([{ kind: 'permission' }])
+})
+
+test('a plan to approve is only announced: an answer from the phone could not close it', async ($, on) => {
+  const { clock, seen } = world(on, { orders: [{ chosen: true, id: 4, submit: 'plan the release' }] })
+  on('turn.start', (_, e) => ({ turnId: e.turnId }))
+  on('tool.check', () => ({ decision: 'ask' }))
+  on('classic.PermissionRequest', () => ({}))
+  await $.session.start({ cwd: '/work/project', surface: 'terminal', isInteractive: true })
+  await clock.advance(200)
+  await clock.settle()
+  await $.turn.start({ text: 'plan the release', turnId: 'spoken' })
+  await $.tool.check({ tool: 'ExitPlanMode', input: {}, tool_use_id: 'call-1', approver: 'person' })
+  expect(await $.classic.PermissionRequest({ tool_name: 'ExitPlanMode', tool_input: {}, permission_suggestions: [] })).toEqual({})
+  await clock.settle()
+  expect(seen.events.filter((e) => e.kind === 'permission')).toEqual([{ kind: 'permission' }])
+})
+
+test("a dialog in a turn the owner didn't speak isn't offered", async ($, on) => {
+  const { clock, seen } = world(on, { orders: [{ chosen: true }] })
+  on('turn.start', (_, e) => ({ turnId: e.turnId }))
+  on('tool.check', () => ({ decision: 'ask' }))
+  on('classic.PermissionRequest', () => ({}))
+  await begin($, clock)
+  await $.turn.start({ text: '<task-notification>done</task-notification>', turnId: 'machine' })
+  await $.tool.check({ tool: 'Bash', input: RM, tool_use_id: 'call-1', approver: 'person' })
+  expect(await $.classic.PermissionRequest({ tool_name: 'Bash', tool_input: RM, permission_suggestions: [] })).toEqual({})
+  await clock.settle()
+  expect(seen.events.filter((e) => e.kind === 'permission')).toEqual([])
 })

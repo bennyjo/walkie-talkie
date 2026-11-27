@@ -173,6 +173,13 @@ final class GatewayLink {
         return "walkie-confirm|" + nonce + "|" + hex(digest);
     }
 
+    /** What the fingerprint signs to answer a permission request: as security.permission_message. */
+    static String permissionMessage(String nonce, String request, String decision, String text)
+            throws GeneralSecurityException {
+        byte[] digest = MessageDigest.getInstance("SHA-256").digest(text.getBytes(StandardCharsets.UTF_8));
+        return "walkie-permission|" + nonce + "|" + request + "|" + decision + "|" + hex(digest);
+    }
+
     void start() {
         running = true;
         reader = new Thread(this::connectLoop, "walkie-link");

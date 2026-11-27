@@ -1,6 +1,6 @@
 # Use Walkie Talkie
 
-This page covers a call from start to end, choosing a mic, switching sessions, pausing, the speaker check, how the gateway decides a message has ended, the timing log, how it talks, and troubleshooting.
+This page covers a call from start to end, choosing a mic, answering a permission, switching sessions, pausing, the speaker check, how the gateway decides a message has ended, the timing log, how it talks, and troubleshooting.
 
 ## Start a call
 
@@ -45,10 +45,24 @@ When the call can't hear you, or you can't hear its replies, the phone says so. 
 | Hear "something on screen" | The reply had code, a path, or something similar there, which isn't read out. Look, or ask what it is. Don't confirm something you haven't heard |
 | Hear "hasn't started that" | The session has your message, but hasn't started it after 10 seconds. A dialog may be open at the keyboard. It runs when the dialog closes, unless you tap or stop the app |
 | Hear "stopped at the keyboard" | Someone pressed Esc in that session, so it refuses spoken prompts. Say **type it** within 30 seconds to send that message through the session's own prompt box. Over the notice, a lone "type it" is too short to count, so say "yes, type that", or wait for the notice to end. Messages queued after it are dropped, and you hear that they were. This works only in herdr or tmux. In a plain terminal, you hear that it can't reach the terminal |
-| Hear "asking for a permission" | The session needs an answer at the keyboard. Tap to stop the turn |
+| Hear "asking for a permission" | Open the app to approve or deny it with your fingerprint. See [Answer a permission](#answer-a-permission) |
 | Hear the warning tone, then "Didn't catch your voice. Say it again." | The [speaker check](#listen-only-to-your-voice) refused the message, so it didn't reach the session. Say it again, with a little more if it was a single word |
 
 While a reply plays or you speak, the phone lowers other audio, such as music, so you hear the voice over it. The audio comes back to full volume about two seconds after both stop.
+
+## Answer a permission
+
+When a turn you started by voice asks for a permission, such as to run a command, you hear "The session is asking for a permission. To approve or deny it, open the app and use your fingerprint." A notification says something is waiting for your fingerprint.
+
+1. Open the app. It shows what the session asks to do, such as the command it wants to run, with **Deny** and **Approve**.
+1. Tap one, and touch the sensor.
+1. You hear "Approved." or "Denied."
+
+**Approve** allows that one call, as **Yes** at the keyboard does. It doesn't allow the same thing again later, and it doesn't change the session's permission mode. **Deny** refuses the call, as **No** does. The session is told to stop, so it says so and waits for what you say next.
+
+The dialog stays open at the keyboard, and whichever answers first counts. When it's answered at the keyboard, or the turn stops, the app's card goes. An answer from the app after that does nothing, and you hear "That permission was already answered, or has gone, so I sent nothing."
+
+Only the app answers, with your fingerprint: not your voice, an earbud tap, the lock screen, or the notification. A tap still stops the turn, and the request goes with it. A dialog that a subagent opens isn't offered in the app: you hear "The session is asking for a permission at the keyboard." Nor are a question the session asks you, or a plan for you to approve. When several dialogs are open, the app offers them one at a time, oldest first.
 
 ## Switch sessions
 
@@ -256,7 +270,7 @@ Write for the ear:
 
 Some rules always apply, whatever the file says. The rules cover only the reply to the prompt they arrive with. The session leaves out code, commands, file paths, URLs, credentials, and similar text, which the gateway drops anyway. Before anything destructive, it asks you to say one specific word back.
 
-You can also ask by voice. Say something like "talk slower from now on" or "keep your confirmations shorter", and the session edits the file, creating it from the current rules if it's missing, and changes only what you asked, so the change holds for every later reply and session. Changing a file outside its folder may need your permission at the keyboard, and then you hear "asking for a permission".
+You can also ask by voice. Say something like "talk slower from now on" or "keep your confirmations shorter", and the session edits the file, creating it from the current rules if it's missing, and changes only what you asked, so the change holds for every later reply and session. Changing a file outside its folder may need a permission, and then you hear "asking for a permission": see [Answer a permission](#answer-a-permission).
 
 ## Troubleshooting
 

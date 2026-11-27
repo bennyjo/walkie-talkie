@@ -60,7 +60,8 @@ import org.json.JSONObject;
  * Start asks for a fingerprint, every time, and the fingerprint signs that one session for that one run.
  * A switch takes a fingerprint too, and the screen names the new session only once the Mac has moved the
  * call there. A read-back that needs a yes, and a spoken switch, are confirmed here with a fingerprint as
- * well. Like a banking app, the screen can't be captured.
+ * well, and so is each answer to a session's permission request: Approve or Deny, each as easy as the other.
+ * Like a banking app, the screen can't be captured.
  */
 public class MainActivity extends Activity {
     private static final String TAG = "walkie";
@@ -123,6 +124,9 @@ public class MainActivity extends Activity {
     private TextView stateHint;
     private LinearLayout confirmCard;
     private TextView confirmText;
+    private LinearLayout permissionCard;
+    private TextView permissionTitle;
+    private TextView permissionDetail;
     private TextView talkNote;
     private TextView talkDays;
     private TextView switchLabel;
@@ -157,6 +161,7 @@ public class MainActivity extends Activity {
     private boolean switchAsked;   // the fingerprint for that switch has been asked for
     private long switchingSince;
     private String declined;   // the confirmation last turned down here
+    private String answered;   // the permission request last answered here
     private String notice;     // good news during a call, such as the session it moved to
     private long noticeSince;
     private String seenMessage;
@@ -382,6 +387,27 @@ public class MainActivity extends Activity {
         confirmCard.addView(ui.primary("Confirm with fingerprint", this::confirm), ui.below(Ui.SPACE_XL));
         confirmCard.addView(ui.quiet("Not now", this::decline), ui.below(Ui.SPACE_XS));
         content.addView(confirmCard, ui.below(Ui.SPACE_XXL));
+
+        permissionCard = ui.card();
+        permissionCard.setPadding(ui.dp(Ui.SPACE_XL), ui.dp(Ui.SPACE_XL), ui.dp(Ui.SPACE_XL), ui.dp(Ui.SPACE_L));
+        permissionCard.addView(ui.label("The session asks for a permission"));
+        permissionTitle = ui.title("");
+        permissionCard.addView(permissionTitle, ui.below(Ui.SPACE_S));
+        permissionDetail = ui.body("");
+        permissionDetail.setTypeface(android.graphics.Typeface.MONOSPACE);
+        permissionDetail.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 14);
+        permissionCard.addView(permissionDetail, ui.below(Ui.SPACE_S));
+        // Deny and Approve look and work alike: neither answer is the easy one.
+        LinearLayout answers = new LinearLayout(this);
+        answers.setOrientation(LinearLayout.HORIZONTAL);
+        LinearLayout.LayoutParams half = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1);
+        answers.addView(ui.secondary("Deny", () -> answerPermission("deny")), half);
+        LinearLayout.LayoutParams otherHalf = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1);
+        otherHalf.leftMargin = ui.dp(Ui.SPACE_M);
+        answers.addView(ui.secondary("Approve", () -> answerPermission("allow")), otherHalf);
+        permissionCard.addView(answers, ui.below(Ui.SPACE_XL));
+        permissionCard.addView(ui.muted("Approve allows this once."), ui.below(Ui.SPACE_M));
+        content.addView(permissionCard, ui.below(Ui.SPACE_XXL));
 
         talkNote = ui.note(false);
         content.addView(talkNote, ui.below(Ui.SPACE_XL));
@@ -691,6 +717,29 @@ public class MainActivity extends Activity {
             decline(nonce);
             notSwitched();
         } : null);
+    }
+
+    /** Approve or Deny: the fingerprint signs this request and this answer, so neither can stand for the other. */
+    private void answerPermission(String decision) {
+        JSONObject permission = TalkService.status.permission;
+        if (permission == null || asking) return;
+        String nonce = permission.optString("nonce");
+        String text = permission.optString("text");
+        String signed;
+        try {
+            signed = GatewayLink.permissionMessage(nonce, permission.optString("request"), decision, text);
+        } catch (GeneralSecurityException e) {
+            return;
+        }
+        boolean allow = decision.equals("allow");
+        fingerprint(allow ? "Approve once" : "Deny", text, signed, signature -> {
+            answered = nonce; // the card goes now, not when the service has passed the answer on
+            startService(new Intent(this, TalkService.class)
+                    .setAction(TalkService.ACTION_PERMISSION)
+                    .putExtra(TalkService.EXTRA_NONCE, nonce)
+                    .putExtra(TalkService.EXTRA_DECISION, decision)
+                    .putExtra(TalkService.EXTRA_SIG, signature));
+        });
     }
 
     private void decline() {
@@ -1083,11 +1132,22 @@ public class MainActivity extends Activity {
 
         boolean confirming = status.confirm != null && switching == null
                 && !status.confirm.optString("nonce").equals(declined);
+        JSONObject permission = status.permission;
+        boolean permitting = !confirming && permission != null && switching == null
+                && !permission.optString("nonce").equals(answered);
         Ui.shown(confirmCard, confirming);
-        Ui.shown(orb, !confirming);
-        Ui.shown(stateTitle, !confirming);
-        Ui.shown(stateHint, !confirming);
+        Ui.shown(permissionCard, permitting);
+        Ui.shown(orb, !confirming && !permitting);
+        Ui.shown(stateTitle, !confirming && !permitting);
+        Ui.shown(stateHint, !confirming && !permitting);
         if (confirming) show(confirmText, status.confirm.optString("text"));
+        if (permitting) {
+            String text = permission.optString("text");
+            int line = text.indexOf('\n');
+            show(permissionTitle, line < 0 ? text : text.substring(0, line));
+            show(permissionDetail, line < 0 ? "" : text.substring(line + 1));
+            Ui.shown(permissionDetail, line >= 0);
+        }
 
         int state;
         String title;

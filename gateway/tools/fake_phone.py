@@ -6,7 +6,8 @@ software key in place of the phone's hardware key, saves it in FILE, and prints 
 then starts as the app does: it lists the sessions, asks for a challenge, signs the chosen session
 with that key, and logs in with the signature. Each --say file is one turn. It prints when each thing
 arrived, in seconds after that clip ended. With --confirm, it signs any read-back or spoken switch the
-gateway asks to confirm, as a fingerprint in the app would.
+gateway asks to confirm, as a fingerprint in the app would. With --permission allow or deny, it answers
+each permission request the gateway offers that way, signed as Approve or Deny in the app would be.
 
 To talk over a reply, --talk-over names a clip to speak, --talk-after seconds into the reply. Like
 the app, it sends a hold just after the voice starts, and stops playing what it received. --leak-db
@@ -79,8 +80,9 @@ def sign(key, message):
 
 
 class FakePhone:
-    def __init__(self, host, port, token, key=None, confirm=False):
+    def __init__(self, host, port, token, key=None, confirm=False, permission=None):
         self.host, self.port, self.token, self.key, self.confirm = host, port, token, key, confirm
+        self.permission = permission  # how to answer a permission request: allow, deny, or None to leave it
         self.run = secrets.token_hex(16)
         self.seal = None        # this connection's encryption, as the app's: made at login
         self.nonce = None
@@ -177,6 +179,13 @@ class FakePhone:
                         signed = (security.start_message(message["nonce"], self.run, target["id"], target["modNonce"])
                                   if target else security.confirm_message(message["nonce"], message["text"]))
                         self.send({"t": "confirmed", "nonce": message["nonce"], "sig": sign(self.key, signed)})
+                elif message["t"] == "permission" and message.get("nonce"):
+                    print("asked for a permission:", json.dumps(message["text"]), flush=True)
+                    if self.permission:
+                        signed = security.permission_message(message["nonce"], message["request"], self.permission,
+                                                             message["text"])
+                        self.send({"t": "permission", "nonce": message["nonce"], "decision": self.permission,
+                                   "sig": sign(self.key, signed)})
                 self.events.append((now, message["t"] + ":" + str(message.get("kind", ""))))
 
     def _leak(self, packet):
@@ -262,6 +271,8 @@ async def main():
     parser.add_argument("--key-file", required=True, help="the stand-in for the phone's hardware key")
     parser.add_argument("--confirm", action="store_true",
                         help="confirm read-backs and spoken switches, as a fingerprint in the app would")
+    parser.add_argument("--permission", choices=("allow", "deny"),
+                        help="answer each permission request this way, as Approve or Deny in the app")
     parser.add_argument("--session", help="pick the session whose name holds this text")
     parser.add_argument("--say", action="append", default=[], help="a 16 kHz mono WAV to speak; repeatable")
     parser.add_argument("--tap-after", type=float, help="seconds after the first reply audio to tap")
@@ -281,7 +292,8 @@ async def main():
         await pair(args.host, args.port, args.pair, args.key_file)
         return
     speech = Speech(args.models) if args.models else None
-    phone = FakePhone(args.host, args.port, open(args.token_file).read().strip(), load_key(args.key_file), args.confirm)
+    phone = FakePhone(args.host, args.port, open(args.token_file).read().strip(), load_key(args.key_file), args.confirm,
+                      args.permission)
     await phone.connect()
     await asyncio.wait_for(phone.on_sessions.wait(), 10)
     deadline = time.monotonic() + 20

@@ -179,6 +179,12 @@ def confirm_message(nonce, spoken):
     return "|".join(("walkie-confirm", nonce, hashlib.sha256(spoken.encode()).hexdigest()))
 
 
+def permission_message(nonce, request, decision, text):
+    """What the phone signs to answer a permission request: the gateway's challenge, the session's own
+    name for the request, allow or deny, and the words the app showed."""
+    return "|".join(("walkie-permission", nonce, request, decision, hashlib.sha256(text.encode()).hexdigest()))
+
+
 def signed(key_text, message, signature):
     """Whether signature, base64 of a DER ECDSA signature, signs message under the phone's key."""
     if not key_text or not isinstance(message, str) or not isinstance(signature, str):
