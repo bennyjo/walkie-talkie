@@ -1961,24 +1961,110 @@ class ConversationTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.voices()[-1]["chosen"], "bm_george")
 
     async def test_a_voice_the_model_lacks_is_refused(self):
+        self.choose()
         self.conversation.phone_message({"t": "voice", "id": "../../etc/passwd"})
         self.assertEqual(self.conversation.voice, DEFAULT_VOICE)
 
-    async def test_the_choice_of_voice_survives_a_restart_in_a_private_file(self):
+    def two_sessions(self):
+        """A Firstmate home and a secondmate home, on one login, as the owner runs them."""
+        first, second = self.link.sessions["7"], self.link.sessions["8"]
+        first.cwd, first.login = "/Users/me/firstmate", "personal"
+        second.cwd, second.login, second.label = "/Users/me/firstmate/sm/walkie", "personal", "secondmate walkie"
+        return first, second
+
+    async def test_each_session_keeps_its_own_voice(self):
+        # The owner picked Isabella while talking to the secondmate, went back to firstmate, and heard Isabella there too.
+        first, second = self.two_sessions()
+        self.choose("7")
+        self.conversation.phone_message({"t": "voice", "id": "bf_emma"})
+        self.choose("8")
+        self.assertEqual(self.voices()[-1]["chosen"], DEFAULT_VOICE)  # a session with no choice yet has the default
+        self.conversation.phone_message({"t": "voice", "id": "bf_isabella"})
+        self.choose("7")
+        self.assertEqual(self.voices()[-1]["chosen"], "bf_emma")  # the app's picker shows this session's voice
+        self.session = first
+        self.event(kind="turn-start", turnId="t")
+        self.event(kind="text", turnId="t", text="From firstmate.")
+        self.event(kind="turn-end", turnId="t", reason="answer")
+        await self.by_then(lambda: "From firstmate." in self.phone.said())
+        self.choose("8")
+        self.assertEqual(self.voices()[-1]["chosen"], "bf_isabella")
+        self.session = second
+        self.event(kind="turn-start", turnId="u")
+        self.event(kind="text", turnId="u", text="From the secondmate.")
+        self.event(kind="turn-end", turnId="u", reason="answer")
+        await self.by_then(lambda: "From the secondmate." in self.phone.said())
+        self.assertEqual(self.conversation.speech.voices, ["bf_emma", "bf_isabella"])
+
+    async def test_each_session_voice_survives_a_restart_in_a_private_file(self):
+        self.two_sessions()
         with tempfile.TemporaryDirectory() as folder:
             path = os.path.join(folder, "voice")
 
             def make():
-                return Conversation(FakeSpeech(), bool, FakeDecoder, FakeEncoder(), voice_file=path)
+                made = Conversation(FakeSpeech(), bool, FakeDecoder, FakeEncoder(), voice_file=path)
+                made.phone, made.modlink = self.phone, self.link
+                return made
 
             first = make()
-            first.phone = self.phone
-            first.phone_message({"t": "voice", "id": "af_nicole"})
+            first._set_chosen("7")
+            first.phone_message({"t": "voice", "id": "bf_emma"})
+            first._set_chosen("8")
+            first.phone_message({"t": "voice", "id": "bf_isabella"})
             self.assertEqual(os.stat(path).st_mode & 0o777, 0o600)
-            self.assertEqual(make().voice, "af_nicole")
+            again = make()
+            self.assertEqual(again.voice, DEFAULT_VOICE)  # with no session chosen
+            again._set_chosen("8")
+            self.assertEqual(again.voice, "bf_isabella")
+            again._set_chosen("7")
+            self.assertEqual(again.voice, "bf_emma")
+            # A Claude Code restart is a new process in the same folder, on the same login.
+            self.link.sessions["9"] = Session("9")
+            self.link.sessions["9"].cwd, self.link.sessions["9"].login = "/Users/me/firstmate/sm/walkie", "personal"
+            again._set_chosen("9")
+            self.assertEqual(again.voice, "bf_isabella")
+            for saved in ("[{\"login\": 1}]", "{\"default\": 7, \"sessions\": {}}", "nobody", ""):
+                with open(path, "w") as f:
+                    f.write(saved)
+                restarted = make()
+                restarted._set_chosen("8")
+                self.assertEqual(restarted.voice, DEFAULT_VOICE)
+
+    async def test_the_one_voice_an_older_gateway_saved_carries_over_to_sessions_with_no_choice(self):
+        # Before voices were per session, the owner's pick was saved for every session. An upgrade mustn't lose it.
+        self.two_sessions()
+        with tempfile.TemporaryDirectory() as folder:
+            path = os.path.join(folder, "voice")
             with open(path, "w") as f:
-                f.write("nobody")
-            self.assertEqual(make().voice, DEFAULT_VOICE)
+                f.write("bf_isabella\n")
+
+            def make():
+                made = Conversation(FakeSpeech(), bool, FakeDecoder, FakeEncoder(), voice_file=path)
+                made.phone, made.modlink = self.phone, self.link
+                return made
+
+            upgraded = make()
+            self.assertEqual(upgraded.voice, "bf_isabella")  # with no session chosen, as for a notice about none
+            upgraded._set_chosen("7")
+            self.assertEqual(upgraded.voice, "bf_isabella")
+            upgraded.phone_message({"t": "voice", "id": "bf_emma"})
+            again = make()
+            again._set_chosen("8")
+            self.assertEqual(again.voice, "bf_isabella")  # still, after a choice in another session was saved
+            again._set_chosen("7")
+            self.assertEqual(again.voice, "bf_emma")
+
+    async def test_a_notice_about_a_session_speaks_in_its_voice_and_one_about_none_in_the_default(self):
+        self.two_sessions()
+        self.choose("8")
+        self.conversation.phone_message({"t": "voice", "id": "bf_isabella"})
+        self.conversation.say(CANCELLED)
+        await self.by_then(lambda: len(self.conversation.speech.voices) == 1)
+        self.conversation._session_gone("8")  # its notice is about the session that went
+        await self.by_then(lambda: len(self.conversation.speech.voices) == 2)
+        self.conversation.say(NO_SESSION)  # no session is chosen, so it's about none
+        await self.by_then(lambda: len(self.conversation.speech.voices) == 3)
+        self.assertEqual(self.conversation.speech.voices, ["bf_isabella", "bf_isabella", DEFAULT_VOICE])
 
     # --- the gateway's own notices -------------------------------------------------
 
@@ -2005,8 +2091,8 @@ class ConversationTest(unittest.IsolatedAsyncioTestCase):
         # The owner chose Emma, and the notices still spoke in another voice. A reply that says "Paused." is told
         # apart by the tone, which only the phone makes, and the log, which names only notices.
         sent = self.sound_log()
-        self.conversation.phone_message({"t": "voice", "id": "bf_emma"})
         self.choose()
+        self.conversation.phone_message({"t": "voice", "id": "bf_emma"})
         self.event(kind="turn-start", turnId="t")
         self.event(kind="text", turnId="t", text="Done for now.\nPaused.\n")
         self.event(kind="turn-end", turnId="t", reason="answer")

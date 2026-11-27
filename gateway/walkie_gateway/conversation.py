@@ -73,6 +73,12 @@ and neither is a switch, which the fingerprint gates. In shadow mode, the defaul
 scores are only logged. Enforcing, a message that fails is dropped with the warn tone and
 VOICE_REFUSED, so the owner says it again. It's a filter, not a lock: a recording of the
 owner, or a voice close enough to theirs, can pass.
+
+Each session speaks in its own voice, which the app picks while that session is chosen. The choice
+is saved under the session's login and folder, so it outlasts a restart of the gateway or of
+Claude Code. A session with no choice yet has the default: the one voice an older gateway saved for
+every session, if there was one. A notice speaks in the voice of the session it's about, and one
+about none, in the default.
 """
 import asyncio
 import collections
@@ -129,7 +135,7 @@ UNCHECKED = ("cancel", "no", "pause")  # they only stop or decline
 class Notice(str):
     """The gateway's own words, as opposed to a reply's. The log gets its name, never its words.
 
-    A notice speaks in the voice the owner chose, after a tone that only the phone makes.
+    A notice speaks in the voice of the session it's about, after a tone that only the phone makes.
     So a reply that says "Paused." on its own comes without the tone. The tone marks where a notice starts, not
     where it ends, so a reply sentence straight after a notice sounds like part of it.
     """
@@ -247,10 +253,14 @@ class Hold:
         self.levels = []        # the speech heard, which outlasts the detector forgetting it
 
 
+def _speaker(voice):
+    """Whether the speech model has this voice."""
+    return any(voice == name for name, _ in SPEAKERS)
+
+
 def is_state_notice(unit):
-    """A reply's sentence can have the same words, but it comes with a voice."""
-    text, _, reply_voice, _ = unit
-    return reply_voice is None and text in STATE_NOTICES
+    """A reply's sentence can have the same words, but it comes with a reply voice."""
+    return unit[2] is None and unit[0] in STATE_NOTICES
 
 
 class Conversation:
@@ -272,6 +282,7 @@ class Conversation:
         self.tts_pool = concurrent.futures.ThreadPoolExecutor(1, thread_name_prefix="tts")
         self.speaker_pool = concurrent.futures.ThreadPoolExecutor(1, thread_name_prefix="speaker")
         self.chosen = None          # the instance of the chosen session
+        self.chosen_key = None      # its login and folder, which its voice is saved under
         self.gen = 1                # speech of an earlier generation was cut off
         self.say_queue = collections.deque()
         self.say_ready = asyncio.Event()
@@ -291,7 +302,7 @@ class Conversation:
         self.owner_level = None     # how loud the owner's last message was: None until they've spoken
         self.played_words = collections.deque(maxlen=PLAYED_WORDS)  # (when it plays, word)
         self.voice_file = voice_file
-        self.voice = self._load_voice()
+        self.default_voice, self.voices = self._load_voices()  # and (login, folder) -> that session's voice
         self.reply_voice = self.voice  # a choice takes effect from the next reply
         self.pace = Pace(talk_file)  # the speed and pauses, which an edit to the talk file changes from the next sentence
         self.pause_file = pause_file
@@ -407,13 +418,14 @@ class Conversation:
     def _end_run(self, why, notice=None):
         """No session stays chosen, and the phone's run is over. The phone hears why once the notice has had time to play."""
         run = self.phone.run_id
+        voice = self.voice  # the notice is about the session this run had
         self._set_chosen(None)
         self.phone.end_run()
         self.lost_at = None
         if why is None:
             return
         if notice:
-            self.say(notice)
+            self.say(notice, voice=voice)
             asyncio.get_running_loop().call_later(ENDED_AFTER_SECONDS, self.phone.send_ended, run, why)
         else:
             self.phone.send_ended(run, why)
@@ -424,15 +436,17 @@ class Conversation:
 
     def _set_chosen(self, instance):
         if instance == self.chosen:
+            self.chosen_key = self._voice_key(instance)
             return
         queued = any("queued" in metrics.times for metrics in self.prompt_metrics.values())
+        old_voice = self.voice
         unfinished = self._unfinished_state_notice()
         self._cut_speech()
         self.orders.clear()
         self.accepted.clear()
         self._report_waiting_prompts()
         old = self._chosen_session()
-        self.chosen = instance
+        self.chosen, self.chosen_key = instance, self._voice_key(instance)
         self._drop_reply()
         self._drop_confirm()
         self.typing_offer = None
@@ -442,9 +456,10 @@ class Conversation:
         if instance:
             self.modlink.sessions[instance].wake()
             if queued:  # the session that had them drops them when it hears it was let go
-                self.say(QUEUE_DROPPED)
+                self.say(QUEUE_DROPPED, voice=old_voice)
         if unfinished:  # it's about listening, not the session, and it may be the only sign of a pause
             self.say(unfinished)
+        self._send_voices()  # the app's picker shows this session's voice
         self.sessions_changed()
 
     def _unfinished_state_notice(self):
@@ -1000,7 +1015,7 @@ class Conversation:
         self.readback = None    # only the newest reply can take a yes, and only once it has played
         for unit in relayed.units:
             self.say(unit, reply_voice=self.voice, relayed=relayed)
-        self.say_queue.append((relayed, None, self.voice, None))
+        self.say_queue.append((relayed, None, self.voice, None, self.voice))
         self.say_ready.set()
 
     def _release_relays(self):
@@ -1016,7 +1031,7 @@ class Conversation:
         relayed.units, relayed.takes_yes = [], False
         self.say_queue = collections.deque(item for item in self.say_queue if item[3] is not relayed)
         log.info("notice %s", REPLY_NOT_SPOKEN.name)
-        self.say_queue.appendleft((REPLY_NOT_SPOKEN, None, None, None))
+        self.say_queue.appendleft((REPLY_NOT_SPOKEN, None, None, None, self.voice))
 
     def _order_result(self, event):
         order_id = event.get("id")
@@ -1123,11 +1138,12 @@ class Conversation:
 
     # --- speaking ----------------------------------------------------------------
 
-    def say(self, text, metrics=None, reply_voice=None, relayed=None):
-        """A reply's words come with the voice its turn began with. Anything else is a notice, in the chosen voice."""
+    def say(self, text, metrics=None, reply_voice=None, relayed=None, voice=None):
+        """A reply's words come with the voice its turn began with. Anything else is a notice, in the voice
+        of the session it's about: the chosen one unless another is given, and with none, the default."""
         if isinstance(text, Notice):  # never by its words, which a reply can copy
             log.info("notice %s", text.name)
-        unit = (text, metrics, reply_voice, relayed)
+        unit = (text, metrics, reply_voice, relayed, reply_voice or voice or self.voice)
         if is_state_notice(unit):
             self._drop_unsent_state_notice()
             self.state_notice, self.state_notice_ends = text, math.inf
@@ -1151,7 +1167,7 @@ class Conversation:
                 self.say_ready.clear()
                 continue
             unit = self.say_queue.popleft()
-            text, metrics, reply_voice, relayed = unit
+            text, metrics, reply_voice, relayed, voice = unit
             if isinstance(text, Relayed):
                 self.frames.append((text, None, True, [], None, False))
                 self.frames_ready.set()
@@ -1161,7 +1177,7 @@ class Conversation:
             self.synthesizing = unit
             packets = []
             try:
-                packets = await loop.run_in_executor(self.tts_pool, self._synthesize, text, reply_voice or self.voice)
+                packets = await loop.run_in_executor(self.tts_pool, self._synthesize, text, voice)
             except Exception:
                 log.exception("synthesis failed")
                 if relayed and self.synthesizing is unit:
@@ -1195,29 +1211,59 @@ class Conversation:
 
     # --- the voice ---------------------------------------------------------------
 
-    def _load_voice(self):
+    @property
+    def voice(self):
+        """The chosen session's voice, or the default with none chosen."""
+        return self.voices.get(self.chosen_key, self.default_voice)
+
+    def _voice_key(self, instance):
+        """Which session a voice belongs to: its login and folder, the same after either end restarts."""
+        session = self.modlink.sessions.get(instance) if instance and self.modlink else None
+        return (session.login, session.cwd) if session else None
+
+    def _load_voices(self):
+        """The default voice, and each session's own. An older gateway saved one voice's name for every
+        session, so that name starts as the default, and the owner keeps the voice they had."""
         try:
             with open(self.voice_file) as f:
-                saved = f.read().strip()
+                text = f.read().strip()
         except (OSError, TypeError):
-            return DEFAULT_VOICE
-        return saved if any(saved == name for name, _ in SPEAKERS) else DEFAULT_VOICE
+            return DEFAULT_VOICE, {}
+        try:
+            saved = json.loads(text)
+        except ValueError:
+            saved = {"default": text}
+        if not isinstance(saved, dict):
+            return DEFAULT_VOICE, {}
+        default = saved.get("default")
+        voices = {}
+        for entry in saved.get("sessions") if isinstance(saved.get("sessions"), list) else []:
+            if (isinstance(entry, dict) and isinstance(entry.get("login"), str)
+                    and isinstance(entry.get("folder"), str) and _speaker(entry.get("voice"))):
+                voices[(entry["login"], entry["folder"])] = entry["voice"]
+        return (default if _speaker(default) else DEFAULT_VOICE), voices
 
     def _choose_voice(self, voice):
-        if not any(voice == name for name, _ in SPEAKERS):
+        if self.chosen_key is None or not _speaker(voice):
+            self._send_voices()
             return
-        self.voice = voice
+        self.voices[self.chosen_key] = voice
         if self.voice_file:
+            saved = {"default": self.default_voice,
+                     "sessions": [{"login": login, "folder": folder, "voice": chosen}
+                                  for (login, folder), chosen in sorted(self.voices.items())]}
             try:
                 fd = os.open(self.voice_file + ".new", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
                 with os.fdopen(fd, "w") as f:
-                    f.write(voice)
+                    json.dump(saved, f, indent=1)
                 os.replace(self.voice_file + ".new", self.voice_file)
             except OSError:
                 log.exception("couldn't save the voice")
         self._send_voices()
 
     def _send_voices(self):
+        if not self.phone:
+            return
         self.phone.send_control({
             "t": "voices",
             "list": [{"id": name, "name": label} for name, label in SPEAKERS],
