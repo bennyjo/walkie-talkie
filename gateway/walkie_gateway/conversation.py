@@ -359,10 +359,7 @@ class Conversation:
         self.phone.send_control({"t": "cut", "gen": self.gen})
         self._send_voices()
         # It may have waited longer than the connection, or gone while the phone was away.
-        if self.permission:
-            self._send_permission()
-        else:
-            self.phone.send_control({"t": "permission", "nonce": None})
+        self._send_permission()
         self.sessions_changed()
 
     def mic_packet(self, packet):
@@ -956,6 +953,9 @@ class Conversation:
         self.say(PERMISSION)
 
     def _send_permission(self):
+        if not self.permission:
+            self.phone.send_control({"t": "permission", "nonce": None})
+            return
         nonce, request, text = self.permission
         self.phone.send_control({"t": "permission", "nonce": nonce, "request": request, "text": text})
 
@@ -969,7 +969,7 @@ class Conversation:
         permission, session = self.permission, self._chosen_session()
         self.active_at = self.clock()
         if nonce is not None and nonce == self.permission_answered:
-            self.phone.send_control({"t": "permission", "nonce": None})  # sent again after a drop: it's in hand
+            self._send_permission()  # sent again after a drop: it's in hand
             return
         if not permission or nonce != permission[0] or session is None:
             self.say(PERMISSION_GONE)

@@ -1342,6 +1342,19 @@ class ConversationTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.phone.said(), [PERMISSION])
         self.assertEqual(self.controls("permission")[-1], {"t": "permission", "nonce": None})
 
+    async def test_an_answer_sent_again_after_the_next_request_came_keeps_that_request_offered(self):
+        first = self.offer_permission()
+        self.answer_permission(first, "allow")
+        self.event(kind="permission-gone", request="req-1")
+        self.event(kind="permission", request="req-2", text="Allow Bash?\nls")
+        self.conversation.phone_connected()
+        second = self.controls("permission")[-1]
+        self.answer_permission(first, "allow")  # queued before the reconnect's offer arrived
+        self.assertEqual(self.controls("permission")[-1], second)
+        self.assertEqual(second["request"], "req-2")
+        self.answer_permission(second, "deny")
+        self.assertEqual(self.order_for("permission")["permission"]["request"], "req-2")
+
     async def test_words_that_could_draw_otherwise_than_they_run_stay_at_the_keyboard(self):
         for name, text in (
                 ("right-to-left letters", "Allow Bash?\n\u05d0=1; rm -rf ~ #\u05d1 echo hello"),
