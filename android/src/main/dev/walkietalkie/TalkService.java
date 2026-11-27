@@ -322,6 +322,13 @@ public class TalkService extends Service implements GatewayLink.Listener, Speake
         return MicChoice.valid(settings(context).getInt(MIC, MicChoice.DEFAULT));
     }
 
+    /** The mics the app offers now: those whose device is connected. The phone's mic always is. */
+    static int[] micsOffered(Context context) {
+        AudioManager audio = context.getSystemService(AudioManager.class);
+        return MicChoice.offered(types(audio.getDevices(AudioManager.GET_DEVICES_INPUTS)),
+                types(audio.getAvailableCommunicationDevices().toArray(new AudioDeviceInfo[0])));
+    }
+
     /** Saves the choice, and a call on now moves to it. */
     static void chooseMic(Context context, int choice) {
         settings(context).edit().putInt(MIC, MicChoice.valid(choice)).apply();
@@ -498,14 +505,14 @@ public class TalkService extends Service implements GatewayLink.Listener, Speake
     }
 
     private static String noMicText(int choice) {
-        switch (choice) {
-            case MicChoice.HEADSET:
-                return "Connect headphones with a mic, or choose another mic. The mic is off until then.";
-            case MicChoice.PHONE:
-                return "The phone's mic isn't available. The mic is off until it is.";
-            default:
-                return "Connect your USB mic, or choose another mic. The mic is off until then.";
-        }
+        if (choice == MicChoice.PHONE) return "The phone's mic isn't available. The mic is off until it is.";
+        return connectMicText(choice) + " The mic is off until then.";
+    }
+
+    /** What to do when the chosen USB or headphones' mic isn't connected. */
+    static String connectMicText(int choice) {
+        return choice == MicChoice.HEADSET ? "Connect headphones with a mic, or choose another mic."
+                : "Connect your USB mic, or choose another mic.";
     }
 
     private static String noMicSpoken(int choice) {

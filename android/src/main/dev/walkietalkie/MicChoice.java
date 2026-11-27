@@ -14,6 +14,10 @@ package dev.walkietalkie;
  *       reply would be heard as a voice.
  * </ul>
  *
+ * The app offers only the choices whose device is connected now: USB while a USB input is there, HEADSET while
+ * Android offers a Bluetooth headset as a call's device, and PHONE always. A saved choice whose device isn't
+ * connected is kept, and sends nothing until its device is back.
+ *
  * Any other route sends nothing and plays no reply, as before: the phone's mic is never sent unless it's the
  * choice, and its speaker plays a reply only when the phone's mic is the choice and no headphones are there.
  */
@@ -68,6 +72,21 @@ final class MicChoice {
 
     static int valid(int choice) {
         return choice == HEADSET || choice == PHONE ? choice : USB;
+    }
+
+    /**
+     * The choices whose device is connected now, in the order the app lists them, given the types of the
+     * inputs connected now and of the devices Android offers as a call's device. The phone's mic is always there.
+     */
+    static int[] offered(int[] inputs, int[] callDevices) {
+        boolean usb = first(USB_MICS, inputs) >= 0;
+        boolean headset = first(HEADSET_ROUTES, callDevices) >= 0;
+        int[] choices = new int[1 + (usb ? 1 : 0) + (headset ? 1 : 0)];
+        int i = 0;
+        if (usb) choices[i++] = USB;
+        if (headset) choices[i++] = HEADSET;
+        choices[i] = PHONE;
+        return choices;
     }
 
     /**

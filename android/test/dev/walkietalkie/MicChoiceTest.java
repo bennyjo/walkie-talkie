@@ -3,6 +3,7 @@ package dev.walkietalkie;
 import java.io.ByteArrayOutputStream;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.util.Arrays;
 
 /** Plain Java, with no Android and no test library: android/build.sh --test runs it. Also covers Wav. */
 public final class MicChoiceTest {
@@ -26,6 +27,8 @@ public final class MicChoiceTest {
 
     public static void main(String[] args) {
         usbMicIsTheDefault();
+        onlyConnectedMicsAreOffered();
+        aMicIsListedExactlyWhenItsPlanCanSend();
         usbMicSendsOnlyTheUsbRouteAndPlaysOnlyInHeadphones();
         headsetMicTakesCallModeOnlyWithAHeadset();
         headsetMicPrefersLeAudio();
@@ -42,6 +45,49 @@ public final class MicChoiceTest {
         check(MicChoice.DEFAULT == MicChoice.USB, "USB is the default");
         check(MicChoice.valid(-1) == MicChoice.USB && MicChoice.valid(9) == MicChoice.USB, "an unknown choice is USB");
         check(MicChoice.valid(MicChoice.PHONE) == MicChoice.PHONE, "a known choice stays");
+    }
+
+    private static void onlyConnectedMicsAreOffered() {
+        int[] phone = {MicChoice.PHONE};
+        check(Arrays.equals(MicChoice.offered(PHONE_ONLY_IN, new int[] {1, SPEAKER}), phone),
+                "with nothing connected, only the phone's mic");
+        check(Arrays.equals(MicChoice.offered(WITH_HEADSET_IN, HEADSET_CALL),
+                new int[] {MicChoice.HEADSET, MicChoice.PHONE}), "headphones with a mic and no USB mic");
+        check(Arrays.equals(MicChoice.offered(PHONE_ONLY_IN, new int[] {1, SPEAKER, BLE}),
+                new int[] {MicChoice.HEADSET, MicChoice.PHONE}), "LE Audio headphones count as a headset");
+        check(Arrays.equals(MicChoice.offered(WITH_USB_IN, new int[] {1, SPEAKER}),
+                new int[] {MicChoice.USB, MicChoice.PHONE}), "a USB mic with headphones that have no mic");
+        check(Arrays.equals(MicChoice.offered(new int[] {PHONE_MIC, 22}, HEADSET_CALL),
+                new int[] {MicChoice.USB, MicChoice.HEADSET, MicChoice.PHONE}), "a USB headset and headphones: all three");
+        check(MicChoice.offered(NONE, NONE).length == 1, "the phone's mic is offered even unlisted");
+    }
+
+    /** For every mix of these devices, the list and the routing rules agree, so they can't drift apart. */
+    private static void aMicIsListedExactlyWhenItsPlanCanSend() {
+        int[] inputTypes = {1, 3, SCO, USB, 12, PHONE_MIC, 22, BLE};
+        int[] callTypes = {1, SPEAKER, 3, SCO, 22, BLE};
+        for (int in = 0; in < 1 << inputTypes.length; in++) {
+            for (int call = 0; call < 1 << callTypes.length; call++) {
+                int[] inputs = subset(inputTypes, in);
+                int[] callDevices = subset(callTypes, call);
+                int[] offered = MicChoice.offered(inputs, callDevices);
+                check(MicChoice.contains(offered, MicChoice.PHONE), "the phone's mic is always listed");
+                for (int choice : new int[] {MicChoice.USB, MicChoice.HEADSET}) {
+                    MicChoice.Plan plan = MicChoice.plan(choice, inputs, WITH_EARBUDS_OUT, callDevices);
+                    boolean canSend = MicChoice.first(plan.mics, plan.call ? callDevices : inputs) >= 0;
+                    check(plan.choice == choice, "a missing mic never moves to another");
+                    check(MicChoice.contains(offered, choice) == canSend, "listed exactly when its plan can send");
+                }
+            }
+        }
+    }
+
+    private static int[] subset(int[] types, int mask) {
+        int[] picked = new int[Integer.bitCount(mask)];
+        for (int i = 0, n = 0; i < types.length; i++) {
+            if ((mask & 1 << i) != 0) picked[n++] = types[i];
+        }
+        return picked;
     }
 
     private static void usbMicSendsOnlyTheUsbRouteAndPlaysOnlyInHeadphones() {

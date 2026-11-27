@@ -38,6 +38,7 @@ import java.io.IOException;
 import java.security.GeneralSecurityException;
 import java.security.Signature;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Calendar;
 import java.util.HashSet;
 import java.util.List;
@@ -74,8 +75,8 @@ public class MainActivity extends Activity {
     private static final String CONNECT_WHY = "Your fingerprint lets this phone talk to that session until you stop.";
     private static final String[] MIC_NAMES = {"USB mic", "Headphones' mic", "Phone's mic"}; // by MicChoice
     private static final String[] MIC_TIPS = {
-        "Plug in the USB mic and connect your headphones before you start.",
-        "Connect your headphones before you start. Using their mic makes it a phone call, at call quality.",
+        "Connect your headphones before you start.",
+        "Using their mic makes it a phone call, at call quality.",
         "Replies play in your headphones, or on the phone's speaker if none are connected. "
                 + "On the speaker, wait for a reply to finish, or tap the red dot to stop it.",
     };
@@ -127,6 +128,8 @@ public class MainActivity extends Activity {
     private TextView switchLabel;
     private LinearLayout switchList;
     private TextView talkMicValue;
+    private AlertDialog micDialog;
+    private int[] micsOffered = {MicChoice.PHONE}; // the mics connected now, as the last render saw them
     private LinearLayout voiceRow;
     private TextView voiceValue;
     private TextView detailsToggle;
@@ -431,12 +434,16 @@ public class MainActivity extends Activity {
         row.setGravity(Gravity.CENTER_VERTICAL);
         row.setPadding(ui.dp(Ui.SPACE_L + 4), ui.dp(Ui.SPACE_L), ui.dp(Ui.SPACE_L + 4), ui.dp(Ui.SPACE_L));
         TextView left = ui.body(name);
-        row.addView(left, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        row.addView(left, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT));
         TextView right = ui.muted("");
         right.setGravity(Gravity.END);
         right.setSingleLine(true);
         right.setEllipsize(TextUtils.TruncateAt.END);
-        row.addView(right, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.4f));
+        // The value takes the rest, so a long one such as "Headphones' mic, not connected" fits.
+        LinearLayout.LayoutParams value = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
+        value.setMarginStart(ui.dp(Ui.SPACE_L));
+        row.addView(right, value);
         return row;
     }
 
@@ -865,17 +872,47 @@ public class MainActivity extends Activity {
         return text.toString();
     }
 
-    /** Which mic a call listens on. A call on now moves to the new one. */
+    /** Which mic a call listens on, of those connected now. A call on now moves to the new one. */
     private void chooseMicDialog() {
-        new AlertDialog.Builder(this)
+        int[] offered = micsOffered;
+        int chosen = TalkService.micChoice(this);
+        String[] names = new String[offered.length];
+        int checked = -1;
+        for (int i = 0; i < offered.length; i++) {
+            names[i] = MIC_NAMES[offered[i]];
+            if (offered[i] == chosen) checked = i;
+        }
+        micDialog = new AlertDialog.Builder(this)
                 .setTitle("Mic")
-                .setSingleChoiceItems(MIC_NAMES, TalkService.micChoice(this), (dialog, which) -> {
-                    TalkService.chooseMic(this, which);
+                .setSingleChoiceItems(names, checked, (dialog, which) -> {
+                    TalkService.chooseMic(this, offered[which]);
+                    micDialog = null; // its dismiss is delivered later, and render() mustn't open it again
                     dialog.dismiss();
                     render();
                 })
                 .setNegativeButton("Close", null)
+                .setOnDismissListener(dialog -> {
+                    if (micDialog == dialog) micDialog = null;
+                })
                 .show();
+    }
+
+    /** The chosen mic. Follows the mics connected now, and redraws an open Mic list when one comes or goes. */
+    private int chosenMic() {
+        int[] offered = TalkService.micsOffered(this);
+        if (!Arrays.equals(offered, micsOffered)) {
+            micsOffered = offered;
+            if (micDialog != null) {
+                micDialog.dismiss();
+                chooseMicDialog();
+            }
+        }
+        return TalkService.micChoice(this);
+    }
+
+    /** The chosen mic's name, and whether it's connected, for its row. */
+    private String micName(int mic) {
+        return MicChoice.contains(micsOffered, mic) ? MIC_NAMES[mic] : MIC_NAMES[mic] + ", not connected";
     }
 
     /** A tap on the dot stops a reply, as an earbud tap does, for when there are no earbuds to tap. */
@@ -1000,9 +1037,9 @@ public class MainActivity extends Activity {
         boolean listed = list != null && list.length() > 0;
         Ui.shown(homeMicRow, listed);
         Ui.shown(homeTip, listed);
-        int mic = TalkService.micChoice(this);
-        show(homeMicValue, MIC_NAMES[mic]);
-        show(homeTip, MIC_TIPS[mic]);
+        int mic = chosenMic();
+        show(homeMicValue, micName(mic));
+        show(homeTip, MicChoice.contains(micsOffered, mic) ? MIC_TIPS[mic] : TalkService.connectMicText(mic));
         Ui.shown(homeLine, starting || list != null && list.length() > 0);
 
         String key = (list == null ? "" : list.toString()) + ":" + (starting ? picked.optString("id") : "");
@@ -1086,7 +1123,7 @@ public class MainActivity extends Activity {
         note(talkDays, daysLeft(status.pairingDays), false);
 
         renderSwitchList(status);
-        show(talkMicValue, MIC_NAMES[TalkService.micChoice(this)]);
+        show(talkMicValue, micName(chosenMic()));
 
         JSONObject voices = status.voices;
         JSONArray voiceList = voices == null ? null : voices.optJSONArray("list");
