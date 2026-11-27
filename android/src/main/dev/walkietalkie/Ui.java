@@ -66,7 +66,7 @@ final class Ui {
         return view;
     }
 
-    /** A heading inside a screen, such as the state under the circle. */
+    /** A heading inside a screen, such as the state under the dot. */
     TextView title(CharSequence value) {
         return text(value, SERIF, 22, R.color.text);
     }

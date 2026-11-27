@@ -29,7 +29,7 @@ from walkie_gateway.conversation import (
     Conversation,
 )
 from walkie_gateway.modlink import Session
-from walkie_gateway.speech import DEFAULT_VOICE, NOTICE_VOICE, PACE, VOICES, read_pace
+from walkie_gateway.speech import DEFAULT_VOICE, PACE, SPEAKERS, read_pace
 from walkie_gateway.turns import SECONDS, WINDOW
 
 SPOKEN_SECONDS = 0.1
@@ -1944,7 +1944,7 @@ class ConversationTest(unittest.IsolatedAsyncioTestCase):
         self.conversation.phone_connected()
         message = self.voices()[-1]
         self.assertEqual(message["chosen"], DEFAULT_VOICE)
-        self.assertEqual([v["id"] for v in message["list"]], [name for name, _ in VOICES])
+        self.assertEqual([v["id"] for v in message["list"]], [name for name, _ in SPEAKERS])
 
     async def test_a_new_voice_starts_with_the_next_reply(self):
         self.choose()
@@ -2001,8 +2001,9 @@ class ConversationTest(unittest.IsolatedAsyncioTestCase):
                 out.append(word)
         return out
 
-    async def test_a_notice_has_its_own_voice_and_a_tone_that_a_reply_cannot_make(self):
-        # A session steered by what it read ended its reply with "Paused.", and it sounded exactly like the gateway.
+    async def test_a_notice_speaks_in_the_session_voice_after_a_tone_that_a_reply_cannot_make(self):
+        # The owner chose Emma, and the notices still spoke in another voice. A reply that says "Paused." is told
+        # apart by the tone, which only the phone makes, and the log, which names only notices.
         sent = self.sound_log()
         self.conversation.phone_message({"t": "voice", "id": "bf_emma"})
         self.choose()
@@ -2013,7 +2014,7 @@ class ConversationTest(unittest.IsolatedAsyncioTestCase):
         self.finish_turn("Pause.")
         await self.by_then(lambda: "Paused." in self.earbuds(sent)[2:])
         self.assertEqual(self.earbuds(sent), ["Done for now.", "Paused.", "tone", "Paused."])
-        self.assertEqual(self.conversation.speech.voices, ["bf_emma", "bf_emma", NOTICE_VOICE])
+        self.assertEqual(self.conversation.speech.voices, ["bf_emma", "bf_emma", "bf_emma"])
 
     async def test_every_notice_gets_the_tone_just_before_it(self):
         sent = self.sound_log()
@@ -2044,15 +2045,13 @@ class ConversationTest(unittest.IsolatedAsyncioTestCase):
             self.conversation._set_paused(True)
         self.assertEqual([line for line in logs.output if "notice" in line], ["INFO:walkie.conversation:notice paused"])
 
-    async def test_a_reply_cannot_choose_the_notice_voice(self):
-        self.assertNotIn(NOTICE_VOICE, [name for name, _ in VOICES])
-        self.conversation.phone_message({"t": "voice", "id": NOTICE_VOICE})
-        self.assertEqual(self.conversation.voice, DEFAULT_VOICE)
-        with tempfile.TemporaryDirectory() as folder:
-            path = os.path.join(folder, "voice")
-            with open(path, "w") as f:
-                f.write(NOTICE_VOICE)  # chosen before it became the notices' voice
-            self.assertEqual(Conversation(FakeSpeech(), bool, FakeDecoder, FakeEncoder(), voice_file=path).voice, DEFAULT_VOICE)
+    async def test_a_notice_speaks_in_a_new_voice_at_once_while_a_reply_keeps_its_own(self):
+        self.choose()
+        self.conversation.phone_message({"t": "voice", "id": "am_michael"})
+        self.conversation.say("This reply.", None, self.conversation.reply_voice)
+        self.conversation.say(CANCELLED)
+        await self.by_then(lambda: len(self.conversation.speech.voices) == 2)
+        self.assertEqual(self.conversation.speech.voices, [DEFAULT_VOICE, "am_michael"])
 
     async def test_a_hostile_reply_leaves_the_tap_waiting_for_no_time(self):
         # A reply line of 1,200 backticks once held the event loop for 11 seconds, so a tap, Stop, and revoke waited.

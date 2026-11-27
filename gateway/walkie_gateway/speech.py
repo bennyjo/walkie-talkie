@@ -43,11 +43,7 @@ SPEAKERS = (
     ("bm_george", "George, British"),
     ("bm_lewis", "Lewis, British"),
 )
-# The gateway's own notices, such as "Paused.", speak in this voice only. A reply can't choose it, so a reply
-# that says those words never sounds like the gateway.
-NOTICE_VOICE = "am_michael"
-VOICES = tuple(speaker for speaker in SPEAKERS if speaker[0] != NOTICE_VOICE)  # what a reply can speak in
-DEFAULT_VOICE = VOICES[0][0]
+DEFAULT_VOICE = SPEAKERS[0][0]  # the owner can choose any speaker, for the replies and the notices alike
 
 
 log = logging.getLogger("walkie.speech")

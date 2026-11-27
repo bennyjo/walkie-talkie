@@ -88,7 +88,7 @@ import time
 import numpy as np
 
 from . import security
-from .speech import DEFAULT_VOICE, NOTICE_VOICE, VOICES, Pace
+from .speech import DEFAULT_VOICE, SPEAKERS, Pace
 from .text import LEFT_OUT, SpeechFilter, kind, sanitize_prompt, spoken_words, switch_target, words_of
 from .turns import SECONDS, TurnDetector, speaking_level
 
@@ -129,8 +129,9 @@ UNCHECKED = ("cancel", "no", "pause")  # they only stop or decline
 class Notice(str):
     """The gateway's own words, as opposed to a reply's. The log gets its name, never its words.
 
-    A notice speaks in NOTICE_VOICE, which no reply can choose, after a tone that only the phone makes.
-    So a reply that says "Paused." still sounds like the session, not like the gateway.
+    A notice speaks in the voice the owner chose, after a tone that only the phone makes.
+    So a reply that says "Paused." on its own comes without the tone. The tone marks where a notice starts, not
+    where it ends, so a reply sentence straight after a notice sounds like part of it.
     """
 
     def __new__(cls, name, words):
@@ -1123,7 +1124,7 @@ class Conversation:
     # --- speaking ----------------------------------------------------------------
 
     def say(self, text, metrics=None, reply_voice=None, relayed=None):
-        """A reply's words come with the voice its turn began with. Anything else is a notice, in NOTICE_VOICE."""
+        """A reply's words come with the voice its turn began with. Anything else is a notice, in the chosen voice."""
         if isinstance(text, Notice):  # never by its words, which a reply can copy
             log.info("notice %s", text.name)
         unit = (text, metrics, reply_voice, relayed)
@@ -1160,7 +1161,7 @@ class Conversation:
             self.synthesizing = unit
             packets = []
             try:
-                packets = await loop.run_in_executor(self.tts_pool, self._synthesize, text, reply_voice or NOTICE_VOICE)
+                packets = await loop.run_in_executor(self.tts_pool, self._synthesize, text, reply_voice or self.voice)
             except Exception:
                 log.exception("synthesis failed")
                 if relayed and self.synthesizing is unit:
@@ -1200,10 +1201,10 @@ class Conversation:
                 saved = f.read().strip()
         except (OSError, TypeError):
             return DEFAULT_VOICE
-        return saved if any(saved == name for name, _ in VOICES) else DEFAULT_VOICE
+        return saved if any(saved == name for name, _ in SPEAKERS) else DEFAULT_VOICE
 
     def _choose_voice(self, voice):
-        if not any(voice == name for name, _ in VOICES):
+        if not any(voice == name for name, _ in SPEAKERS):
             return
         self.voice = voice
         if self.voice_file:
@@ -1219,7 +1220,7 @@ class Conversation:
     def _send_voices(self):
         self.phone.send_control({
             "t": "voices",
-            "list": [{"id": name, "name": label} for name, label in VOICES],
+            "list": [{"id": name, "name": label} for name, label in SPEAKERS],
             "chosen": self.voice,
         })
 
