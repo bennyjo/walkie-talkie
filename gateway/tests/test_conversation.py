@@ -2023,12 +2023,36 @@ class ConversationTest(unittest.IsolatedAsyncioTestCase):
             self.link.sessions["9"].cwd, self.link.sessions["9"].login = "/Users/me/firstmate/sm/walkie", "personal"
             again._set_chosen("9")
             self.assertEqual(again.voice, "bf_isabella")
-            for saved in ("bf_isabella", "[{\"login\": 1}]", "nobody"):  # an older gateway saved one voice for all
+            for saved in ("[{\"login\": 1}]", "{\"default\": 7, \"sessions\": {}}", "nobody", ""):
                 with open(path, "w") as f:
                     f.write(saved)
                 restarted = make()
                 restarted._set_chosen("8")
                 self.assertEqual(restarted.voice, DEFAULT_VOICE)
+
+    async def test_the_one_voice_an_older_gateway_saved_carries_over_to_sessions_with_no_choice(self):
+        # Before voices were per session, the owner's pick was saved for every session. An upgrade mustn't lose it.
+        self.two_sessions()
+        with tempfile.TemporaryDirectory() as folder:
+            path = os.path.join(folder, "voice")
+            with open(path, "w") as f:
+                f.write("bf_isabella\n")
+
+            def make():
+                made = Conversation(FakeSpeech(), bool, FakeDecoder, FakeEncoder(), voice_file=path)
+                made.phone, made.modlink = self.phone, self.link
+                return made
+
+            upgraded = make()
+            self.assertEqual(upgraded.voice, "bf_isabella")  # with no session chosen, as for a notice about none
+            upgraded._set_chosen("7")
+            self.assertEqual(upgraded.voice, "bf_isabella")
+            upgraded.phone_message({"t": "voice", "id": "bf_emma"})
+            again = make()
+            again._set_chosen("8")
+            self.assertEqual(again.voice, "bf_isabella")  # still, after a choice in another session was saved
+            again._set_chosen("7")
+            self.assertEqual(again.voice, "bf_emma")
 
     async def test_a_notice_about_a_session_speaks_in_its_voice_and_one_about_none_in_the_default(self):
         self.two_sessions()

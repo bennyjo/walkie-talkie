@@ -76,8 +76,9 @@ owner, or a voice close enough to theirs, can pass.
 
 Each session speaks in its own voice, which the app picks while that session is chosen. The choice
 is saved under the session's login and folder, so it outlasts a restart of the gateway or of
-Claude Code, and a session with no choice yet has the default. A notice speaks in the voice of the
-session it's about, and one about none, in the default.
+Claude Code. A session with no choice yet has the default: the one voice an older gateway saved for
+every session, if there was one. A notice speaks in the voice of the session it's about, and one
+about none, in the default.
 """
 import asyncio
 import collections
@@ -252,6 +253,11 @@ class Hold:
         self.levels = []        # the speech heard, which outlasts the detector forgetting it
 
 
+def _speaker(voice):
+    """Whether the speech model has this voice."""
+    return any(voice == name for name, _ in SPEAKERS)
+
+
 def is_state_notice(unit):
     """A reply's sentence can have the same words, but it comes with a reply voice."""
     return unit[2] is None and unit[0] in STATE_NOTICES
@@ -296,7 +302,7 @@ class Conversation:
         self.owner_level = None     # how loud the owner's last message was: None until they've spoken
         self.played_words = collections.deque(maxlen=PLAYED_WORDS)  # (when it plays, word)
         self.voice_file = voice_file
-        self.voices = self._load_voices()  # (login, folder) -> the voice that session speaks in
+        self.default_voice, self.voices = self._load_voices()  # and (login, folder) -> that session's voice
         self.reply_voice = self.voice  # a choice takes effect from the next reply
         self.pace = Pace(talk_file)  # the speed and pauses, which an edit to the talk file changes from the next sentence
         self.pause_file = pause_file
@@ -1208,7 +1214,7 @@ class Conversation:
     @property
     def voice(self):
         """The chosen session's voice, or the default with none chosen."""
-        return self.voices.get(self.chosen_key, DEFAULT_VOICE)
+        return self.voices.get(self.chosen_key, self.default_voice)
 
     def _voice_key(self, instance):
         """Which session a voice belongs to: its login and folder, the same after either end restarts."""
@@ -1216,23 +1222,36 @@ class Conversation:
         return (session.login, session.cwd) if session else None
 
     def _load_voices(self):
+        """The default voice, and each session's own. An older gateway saved one voice's name for every
+        session, so that name starts as the default, and the owner keeps the voice they had."""
         try:
             with open(self.voice_file) as f:
-                saved = json.load(f)
-            return {(entry["login"], entry["folder"]): entry["voice"] for entry in saved
-                    if isinstance(entry["login"], str) and isinstance(entry["folder"], str)
-                    and any(entry["voice"] == name for name, _ in SPEAKERS)}
-        except (OSError, TypeError, ValueError, KeyError):
-            return {}  # none saved yet, or an older gateway's one voice for every session
+                text = f.read().strip()
+        except (OSError, TypeError):
+            return DEFAULT_VOICE, {}
+        try:
+            saved = json.loads(text)
+        except ValueError:
+            saved = {"default": text}
+        if not isinstance(saved, dict):
+            return DEFAULT_VOICE, {}
+        default = saved.get("default")
+        voices = {}
+        for entry in saved.get("sessions") if isinstance(saved.get("sessions"), list) else []:
+            if (isinstance(entry, dict) and isinstance(entry.get("login"), str)
+                    and isinstance(entry.get("folder"), str) and _speaker(entry.get("voice"))):
+                voices[(entry["login"], entry["folder"])] = entry["voice"]
+        return (default if _speaker(default) else DEFAULT_VOICE), voices
 
     def _choose_voice(self, voice):
-        if self.chosen_key is None or not any(voice == name for name, _ in SPEAKERS):
+        if self.chosen_key is None or not _speaker(voice):
             self._send_voices()
             return
         self.voices[self.chosen_key] = voice
         if self.voice_file:
-            saved = [{"login": login, "folder": folder, "voice": chosen}
-                     for (login, folder), chosen in sorted(self.voices.items())]
+            saved = {"default": self.default_voice,
+                     "sessions": [{"login": login, "folder": folder, "voice": chosen}
+                                  for (login, folder), chosen in sorted(self.voices.items())]}
             try:
                 fd = os.open(self.voice_file + ".new", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
                 with os.fdopen(fd, "w") as f:
