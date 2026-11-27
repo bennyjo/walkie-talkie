@@ -2,6 +2,8 @@
 
 A live session can do anything you can do at its keyboard, so getting into one should be as hard as getting into your bank account. Banking apps are the baseline here: when in doubt, this does what a banking app does.
 
+Where security and convenience pull against each other, the default is the secure choice. A more convenient, less secure option stays off until you turn it on. Turning it on is your decision, and the risk is yours to take.
+
 To talk to a session, someone needs all of these at once: a device on your tailnet, at the paired phone's address, holding the paired app's token, and your fingerprint on that phone's hardware key, for that session, at the start of that call.
 
 - **A fingerprint at every call, and at every switch.** Tapping a session to start a call asks for a strong fingerprint, with no PIN instead. It unlocks a key in the phone's secure hardware for one signature, over a fresh challenge from the gateway, this call, the session's ID, and a challenge that session made itself. The session's name in the prompt comes from the gateway's list, and isn't signed. The key never leaves the phone, and it works only while the phone is unlocked. A switch to another session, chosen in the app or spoken, takes the same fingerprint in the app, over a fresh challenge from the gateway, the same call, and that session's ID and challenge, and both the gateway and that session check it. The words "switch session" alone move nothing.
