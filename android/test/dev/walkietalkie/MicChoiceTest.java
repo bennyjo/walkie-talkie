@@ -28,6 +28,7 @@ public final class MicChoiceTest {
     public static void main(String[] args) {
         usbMicIsTheDefault();
         onlyConnectedMicsAreOffered();
+        aMicIsListedExactlyWhenItsPlanCanSend();
         usbMicSendsOnlyTheUsbRouteAndPlaysOnlyInHeadphones();
         headsetMicTakesCallModeOnlyWithAHeadset();
         headsetMicPrefersLeAudio();
@@ -59,6 +60,34 @@ public final class MicChoiceTest {
         check(Arrays.equals(MicChoice.offered(new int[] {PHONE_MIC, 22}, HEADSET_CALL),
                 new int[] {MicChoice.USB, MicChoice.HEADSET, MicChoice.PHONE}), "a USB headset and headphones: all three");
         check(MicChoice.offered(NONE, NONE).length == 1, "the phone's mic is offered even unlisted");
+    }
+
+    /** For every mix of these devices, the list and the routing rules agree, so they can't drift apart. */
+    private static void aMicIsListedExactlyWhenItsPlanCanSend() {
+        int[] inputTypes = {1, 3, SCO, USB, 12, PHONE_MIC, 22, BLE};
+        int[] callTypes = {1, SPEAKER, 3, SCO, 22, BLE};
+        for (int in = 0; in < 1 << inputTypes.length; in++) {
+            for (int call = 0; call < 1 << callTypes.length; call++) {
+                int[] inputs = subset(inputTypes, in);
+                int[] callDevices = subset(callTypes, call);
+                int[] offered = MicChoice.offered(inputs, callDevices);
+                check(MicChoice.contains(offered, MicChoice.PHONE), "the phone's mic is always listed");
+                for (int choice : new int[] {MicChoice.USB, MicChoice.HEADSET}) {
+                    MicChoice.Plan plan = MicChoice.plan(choice, inputs, WITH_EARBUDS_OUT, callDevices);
+                    boolean canSend = MicChoice.first(plan.mics, plan.call ? callDevices : inputs) >= 0;
+                    check(plan.choice == choice, "a missing mic never moves to another");
+                    check(MicChoice.contains(offered, choice) == canSend, "listed exactly when its plan can send");
+                }
+            }
+        }
+    }
+
+    private static int[] subset(int[] types, int mask) {
+        int[] picked = new int[Integer.bitCount(mask)];
+        for (int i = 0, n = 0; i < types.length; i++) {
+            if ((mask & 1 << i) != 0) picked[n++] = types[i];
+        }
+        return picked;
     }
 
     private static void usbMicSendsOnlyTheUsbRouteAndPlaysOnlyInHeadphones() {

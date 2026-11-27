@@ -505,14 +505,14 @@ public class TalkService extends Service implements GatewayLink.Listener, Speake
     }
 
     private static String noMicText(int choice) {
-        switch (choice) {
-            case MicChoice.HEADSET:
-                return "Connect headphones with a mic, or choose another mic. The mic is off until then.";
-            case MicChoice.PHONE:
-                return "The phone's mic isn't available. The mic is off until it is.";
-            default:
-                return "Connect your USB mic, or choose another mic. The mic is off until then.";
-        }
+        if (choice == MicChoice.PHONE) return "The phone's mic isn't available. The mic is off until it is.";
+        return connectMicText(choice) + " The mic is off until then.";
+    }
+
+    /** What to do when the chosen USB or headphones' mic isn't connected. */
+    static String connectMicText(int choice) {
+        return choice == MicChoice.HEADSET ? "Connect headphones with a mic, or choose another mic."
+                : "Connect your USB mic, or choose another mic.";
     }
 
     private static String noMicSpoken(int choice) {

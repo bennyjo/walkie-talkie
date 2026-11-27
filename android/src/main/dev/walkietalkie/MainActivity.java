@@ -434,12 +434,16 @@ public class MainActivity extends Activity {
         row.setGravity(Gravity.CENTER_VERTICAL);
         row.setPadding(ui.dp(Ui.SPACE_L + 4), ui.dp(Ui.SPACE_L), ui.dp(Ui.SPACE_L + 4), ui.dp(Ui.SPACE_L));
         TextView left = ui.body(name);
-        row.addView(left, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        row.addView(left, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT));
         TextView right = ui.muted("");
         right.setGravity(Gravity.END);
         right.setSingleLine(true);
         right.setEllipsize(TextUtils.TruncateAt.END);
-        row.addView(right, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.4f));
+        // The value takes the rest, so a long one such as "Headphones' mic, not connected" fits.
+        LinearLayout.LayoutParams value = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
+        value.setMarginStart(ui.dp(Ui.SPACE_L));
+        row.addView(right, value);
         return row;
     }
 
@@ -882,6 +886,7 @@ public class MainActivity extends Activity {
                 .setTitle("Mic")
                 .setSingleChoiceItems(names, checked, (dialog, which) -> {
                     TalkService.chooseMic(this, offered[which]);
+                    micDialog = null; // its dismiss is delivered later, and render() mustn't open it again
                     dialog.dismiss();
                     render();
                 })
@@ -903,6 +908,11 @@ public class MainActivity extends Activity {
             }
         }
         return TalkService.micChoice(this);
+    }
+
+    /** The chosen mic's name, and whether it's connected, for its row. */
+    private String micName(int mic) {
+        return MicChoice.contains(micsOffered, mic) ? MIC_NAMES[mic] : MIC_NAMES[mic] + ", not connected";
     }
 
     /** A tap on the dot stops a reply, as an earbud tap does, for when there are no earbuds to tap. */
@@ -1028,8 +1038,8 @@ public class MainActivity extends Activity {
         Ui.shown(homeMicRow, listed);
         Ui.shown(homeTip, listed);
         int mic = chosenMic();
-        show(homeMicValue, MIC_NAMES[mic]);
-        show(homeTip, MIC_TIPS[mic]);
+        show(homeMicValue, micName(mic));
+        show(homeTip, MicChoice.contains(micsOffered, mic) ? MIC_TIPS[mic] : TalkService.connectMicText(mic));
         Ui.shown(homeLine, starting || list != null && list.length() > 0);
 
         String key = (list == null ? "" : list.toString()) + ":" + (starting ? picked.optString("id") : "");
@@ -1113,7 +1123,7 @@ public class MainActivity extends Activity {
         note(talkDays, daysLeft(status.pairingDays), false);
 
         renderSwitchList(status);
-        show(talkMicValue, MIC_NAMES[chosenMic()]);
+        show(talkMicValue, micName(chosenMic()));
 
         JSONObject voices = status.voices;
         JSONArray voiceList = voices == null ? null : voices.optJSONArray("list");

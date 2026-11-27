@@ -15,7 +15,7 @@ Every call takes a fingerprint, and the fingerprint lets the phone talk to that 
 
 **Mic**, on the app's home screen and on the call screen, chooses what a call listens on. The app keeps the choice for later calls. Changed during a call, it moves the call to that mic.
 
-**Mic** lists only the mics connected now, and the list follows them as they connect and disconnect: the USB mic while a USB audio input is plugged in, the headphones' mic while Bluetooth headphones with a mic are connected, and the phone's mic always. While the mic you chose isn't connected, a call sends nothing, and the phone warns you with the warning tone and a short sentence, such as "No USB mic, so I can't hear you."
+**Mic** lists only the mics connected now, and the list follows them as they connect and disconnect: the USB mic while a USB audio input is plugged in, the headphones' mic while Bluetooth headphones with a mic are connected, and the phone's mic always. While the mic you chose isn't connected, **Mic** shows it as not connected, such as "USB mic, not connected". A call then sends nothing, and the phone warns you with the warning tone and a short sentence, such as "No USB mic, so I can't hear you."
 
 | Mic | Use it with | Replies play | Keep in mind |
 | --- | --- | --- | --- |
