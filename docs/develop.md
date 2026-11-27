@@ -29,7 +29,7 @@ Run these from the repository root.
 | Mod checks | `claude plugin validate mod/walk-voice` |
 | Phone APK | `android/build.sh` |
 | Emulator test APK | `android/build.sh --debug` |
-| Talk-over gate, audio-ducking, pairing-replacement, mic-choice routing, and notice-file tests, with no device | `android/build.sh --test` |
+| Talk-over gate, audio-ducking, pairing-replacement, mic-choice routing, notice-file, and permission-card tests, with no device | `android/build.sh --test` |
 
 The build needs no Gradle. It downloads a JDK and Android's build tools into `android/.toolchain/`, about 570 MB, and checks their checksums. Nothing is installed system-wide. To keep one signing key across builds, so an update installs over the last version, set `WALKIE_KEYSTORE` to a path outside the repository.
 
