@@ -66,6 +66,7 @@ Only the app answers, with your fingerprint: not your voice, an earbud tap, the 
 
 - A call that carries more than the app shows, such as a write's content, an edit's change, or a notebook cell's source.
 - A call too long to show whole.
+- A call with characters that could make it look different from what runs, such as hidden, control, or text-direction characters.
 - A dialog that a subagent opens.
 - A question the session asks you, or a plan for you to approve.
 

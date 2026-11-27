@@ -511,15 +511,18 @@ async function ownTerminal($) {
 }
 
 // The phone sees the whole call, exactly as it would run, so a fingerprint approves only what it
-// showed: the one field the tool acts on, beside nothing but the model's own label, or else every
-// argument. A call it can't show whole, such as a write's content or a cut command, has none.
+// showed: the one field the tool acts on, beside nothing but a command's own label, or else every
+// argument. A call it can't show whole, such as a write's content, a cut command, or one with
+// characters that draw differently than they run, has none.
 function describeRequest(tool, input) {
   const args = input !== null && typeof input === 'object' ? input : {}
   const field = SHOWN_FIELDS.find((key) => typeof args[key] === 'string')
-  if (field && Object.keys(args).some((key) => key !== field && key !== 'description')) return null
+  const label = tool === 'Bash' ? 'description' : null
+  if (field && Object.keys(args).some((key) => key !== field && key !== label)) return null
   const detail = field ? args[field] : JSON.stringify(args) === '{}' ? '' : JSON.stringify(args)
   const text = detail ? `Allow ${tool}?\n${detail}` : `Allow ${tool}?`
-  return text.length > MAX_PERMISSION_TEXT ? null : text
+  if (text.length > MAX_PERMISSION_TEXT || /[\p{Cc}\p{Cf}\p{Cs}]/u.test(text.replace(/[\n\t]/g, ''))) return null
+  return text
 }
 
 // The ask the engine raised for this request: PermissionRequest names no call, so it's the oldest
