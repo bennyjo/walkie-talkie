@@ -43,8 +43,7 @@ SPEAKERS = (
     ("bm_george", "George, British"),
     ("bm_lewis", "Lewis, British"),
 )
-VOICES = SPEAKERS  # what the owner can choose, for the replies and the gateway's own notices alike
-DEFAULT_VOICE = VOICES[0][0]
+DEFAULT_VOICE = SPEAKERS[0][0]  # the owner can choose any speaker, for the replies and the notices alike
 
 
 log = logging.getLogger("walkie.speech")

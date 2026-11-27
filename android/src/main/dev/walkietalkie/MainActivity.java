@@ -77,7 +77,7 @@ public class MainActivity extends Activity {
         "Plug in the USB mic and connect your headphones before you start.",
         "Connect your headphones before you start. Using their mic makes it a phone call, at call quality.",
         "Replies play in your headphones, or on the phone's speaker if none are connected. "
-                + "On the speaker, wait for a reply to finish, or tap the dot on the call screen to stop it.",
+                + "On the speaker, wait for a reply to finish, or tap the red dot to stop it.",
     };
 
     private final Handler main = new Handler(Looper.getMainLooper());

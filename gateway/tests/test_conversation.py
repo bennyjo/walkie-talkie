@@ -29,7 +29,7 @@ from walkie_gateway.conversation import (
     Conversation,
 )
 from walkie_gateway.modlink import Session
-from walkie_gateway.speech import DEFAULT_VOICE, PACE, VOICES, read_pace
+from walkie_gateway.speech import DEFAULT_VOICE, PACE, SPEAKERS, read_pace
 from walkie_gateway.turns import SECONDS, WINDOW
 
 SPOKEN_SECONDS = 0.1
@@ -1944,7 +1944,7 @@ class ConversationTest(unittest.IsolatedAsyncioTestCase):
         self.conversation.phone_connected()
         message = self.voices()[-1]
         self.assertEqual(message["chosen"], DEFAULT_VOICE)
-        self.assertEqual([v["id"] for v in message["list"]], [name for name, _ in VOICES])
+        self.assertEqual([v["id"] for v in message["list"]], [name for name, _ in SPEAKERS])
 
     async def test_a_new_voice_starts_with_the_next_reply(self):
         self.choose()

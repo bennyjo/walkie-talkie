@@ -108,7 +108,7 @@ A live session can do anything you can do at its keyboard, so getting into one s
 - **Only the sessions you allow.** The mod connects only on the logins you name, and you can keep folders and repositories off the phone.
 - **Speech stays on your devices.** It's recognized and spoken on your Mac. The phone speaks only a few fixed warnings of its own, in Android's offline voice. There's no cloud speech service, crash reporter, or analytics, and nothing you say is logged. Claude Code sends your prompts and replies to Anthropic, as it does when you type.
 - **Calls end.** At Stop, when you say "hang up", the moment the Bluetooth headphones disconnect, after 30 minutes with nothing said, after 2 minutes without the phone, and after four hours at most. The next call takes a new fingerprint.
-- **The gateway's own words sound different.** Notices such as "Paused." play after a short tone that only the phone makes. A reply never comes with that tone, so a reply that says "Paused." can't pass for the gateway.
+- **The gateway's own words start with a tone.** Notices such as "Paused." play after a short tone that only the phone makes, in the voice you chose. A reply never gets that tone. The tone marks where a notice starts, not where it ends: a notice is a sentence or two, and anything after it may be a reply.
 
 **Once you're in.** These are the limits. Read them before you rely on this.
 

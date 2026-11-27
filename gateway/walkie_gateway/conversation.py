@@ -88,7 +88,7 @@ import time
 import numpy as np
 
 from . import security
-from .speech import DEFAULT_VOICE, VOICES, Pace
+from .speech import DEFAULT_VOICE, SPEAKERS, Pace
 from .text import LEFT_OUT, SpeechFilter, kind, sanitize_prompt, spoken_words, switch_target, words_of
 from .turns import SECONDS, TurnDetector, speaking_level
 
@@ -130,7 +130,8 @@ class Notice(str):
     """The gateway's own words, as opposed to a reply's. The log gets its name, never its words.
 
     A notice speaks in the voice the owner chose, after a tone that only the phone makes.
-    So a reply that says "Paused." comes without the tone, and can't pass for the gateway.
+    So a reply that says "Paused." on its own comes without the tone. The tone marks where a notice starts, not
+    where it ends, so a reply sentence straight after a notice sounds like part of it.
     """
 
     def __new__(cls, name, words):
@@ -1200,10 +1201,10 @@ class Conversation:
                 saved = f.read().strip()
         except (OSError, TypeError):
             return DEFAULT_VOICE
-        return saved if any(saved == name for name, _ in VOICES) else DEFAULT_VOICE
+        return saved if any(saved == name for name, _ in SPEAKERS) else DEFAULT_VOICE
 
     def _choose_voice(self, voice):
-        if not any(voice == name for name, _ in VOICES):
+        if not any(voice == name for name, _ in SPEAKERS):
             return
         self.voice = voice
         if self.voice_file:
@@ -1219,7 +1220,7 @@ class Conversation:
     def _send_voices(self):
         self.phone.send_control({
             "t": "voices",
-            "list": [{"id": name, "name": label} for name, label in VOICES],
+            "list": [{"id": name, "name": label} for name, label in SPEAKERS],
             "chosen": self.voice,
         })
 
